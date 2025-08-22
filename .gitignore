@@ -55,3 +55,7 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Generated ScoreSpec files
+scorespec_json/
+

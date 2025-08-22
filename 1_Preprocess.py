@@ -2,9 +2,9 @@
 # build_text_dataset.py
 # Objective-mode pipeline: MIDI -> DuckDB -> ScoreSpec JSON -> (LLM-ready) long description
 
-import argparse, json, uuid
+import argparse, json, uuid, importlib.util
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 
 import duckdb
 import numpy as np
@@ -161,6 +161,24 @@ def connect_db(db_path: str) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(db_path)
     con.execute(SCHEMA_SQL)
     return con
+
+def clear_database(con: duckdb.DuckDBPyConnection):
+    """Clear all tables in the database"""
+    tables = [
+        "files", "tracks", "notes", "controllers", "tempo_ts", "tsigs", "keys",
+        "sections", "pitch_class_spans", "ensemble", "descriptions"
+    ]
+    
+    for table in tables:
+        try:
+            con.execute(f"DROP TABLE IF EXISTS {table}")
+            print(f"✓ Dropped table: {table}")
+        except Exception as e:
+            print(f"✗ Failed to drop table {table}: {e}")
+    
+    # Recreate the schema
+    con.execute(SCHEMA_SQL)
+    print("✓ Recreated database schema")
 
 
 # ----------------------------
@@ -628,6 +646,83 @@ def scorespec_from_duckdb(con: duckdb.DuckDBPyConnection, file_id: str) -> dict:
     }
 
 
+def create_multiple_scorespec_variants(con: duckdb.DuckDBPyConnection, file_id: str, 
+                                     export_scorespec_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Create multiple ScoreSpec variants for different LLM use cases"""
+    
+    # 1. Original full ScoreSpec
+    full_spec = scorespec_from_duckdb(con, file_id)
+    
+    if export_scorespec_dir:
+        export_scorespec_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save original ScoreSpec
+        out_full = export_scorespec_dir / f"{file_id}.scorespec.json"
+        out_full.write_text(json.dumps(full_spec, indent=2))
+        
+        # 2. ScoreSpec-Lite (compact, hierarchical)
+        lite_spec = None
+        try:
+            spec = importlib.util.spec_from_file_location("scorespec_lite", "2_scorespec_lite.py")
+            scorespec_lite_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(scorespec_lite_module)
+            lite_generator = scorespec_lite_module.ScoreSpecLiteGenerator(full_spec)
+            lite_spec = lite_generator.generate_scorespec_lite()
+            out_lite = export_scorespec_dir / f"{file_id}.scorespec_lite.json"
+            out_lite.write_text(json.dumps(lite_spec, indent=2))
+            print(f"  ✓ Generated ScoreSpec-Lite: {out_lite.name}")
+            
+            # Also generate natural language summary
+            out_summary = export_scorespec_dir / f"{file_id}.scorespec_summary.txt"
+            lite_generator.save_natural_language_summary(str(out_summary))
+            print(f"  ✓ Generated ScoreSpec Summary: {out_summary.name}")
+        except Exception as e:
+            print(f"  ✗ Failed to generate ScoreSpec-Lite: {e}")
+        
+        # 4. Enhanced Facts (natural language)
+        enhanced_facts = None
+        try:
+            spec = importlib.util.spec_from_file_location("enhanced_facts", "2_enhanced_facts_extractor.py")
+            enhanced_facts_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(enhanced_facts_module)
+            enhanced_extractor = enhanced_facts_module.EnhancedFactsExtractor(str(out_full))
+            enhanced_facts = enhanced_extractor.generate_all_facts()
+            out_enhanced = export_scorespec_dir / f"{file_id}.enhanced_facts.txt"
+            enhanced_extractor.save_facts_to_file(str(out_enhanced))
+            print(f"  ✓ Generated Enhanced Facts: {out_enhanced.name}")
+        except Exception as e:
+            print(f"  ✗ Failed to generate Enhanced Facts: {e}")
+        
+        # 3. Hierarchical Facts (organized by domain) - needs enhanced_facts_extractor
+        hierarchical_facts = None
+        try:
+            # First import enhanced_facts_extractor
+            enhanced_spec = importlib.util.spec_from_file_location("enhanced_facts", "2_enhanced_facts_extractor.py")
+            enhanced_module = importlib.util.module_from_spec(enhanced_spec)
+            enhanced_spec.loader.exec_module(enhanced_module)
+            
+            # Then import hierarchical_facts
+            spec = importlib.util.spec_from_file_location("hierarchical_facts", "2_hierarchical_facts.py")
+            hierarchical_facts_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(hierarchical_facts_module)
+            
+            # Create the extractor
+            hierarchical_extractor = hierarchical_facts_module.HierarchicalFactsExtractor(full_spec)
+            hierarchical_facts = hierarchical_extractor.get_hierarchical_facts()
+            out_hierarchical = export_scorespec_dir / f"{file_id}.hierarchical_facts.json"
+            out_hierarchical.write_text(json.dumps(hierarchical_facts, indent=2))
+            print(f"  ✓ Generated Hierarchical Facts: {out_hierarchical.name}")
+        except Exception as e:
+            print(f"  ✗ Failed to generate Hierarchical Facts: {e}")
+    
+    return {
+        "full": full_spec,
+        "lite": lite_spec if export_scorespec_dir else None,
+        "hierarchical": hierarchical_facts if export_scorespec_dir else None,
+        "enhanced": enhanced_facts if export_scorespec_dir else None
+    }
+
+
 # ----------------------------
 # 5) Compose & verify & store
 # ----------------------------
@@ -711,13 +806,9 @@ def build_objective(con: duckdb.DuckDBPyConnection, midi_path: Path, file_id: Op
     assert verify_description(con, file_id, description), "Verification failed."
     store_description(con, file_id, description, claims)
 
-    # Export ScoreSpec JSON for model I/O
-    spec = scorespec_from_duckdb(con, file_id)
-    if export_scorespec_dir:
-        export_scorespec_dir.mkdir(parents=True, exist_ok=True)
-        out = export_scorespec_dir / f"{file_id}.scorespec.json"
-        out.write_text(json.dumps(spec, indent=2))
-    return spec
+    # Export multiple ScoreSpec variants for model I/O
+    specs = create_multiple_scorespec_variants(con, file_id, export_scorespec_dir)
+    return specs["full"]  # Return full spec for backward compatibility
 
 
 # ----------------------------
@@ -729,9 +820,14 @@ def main():
     ap.add_argument("--db", required=True, help="Path to DuckDB file (will be created if missing)")
     ap.add_argument("--in_glob", required=True, help="Glob of MIDI files, e.g., 'data/**/*.mid'")
     ap.add_argument("--export_scorespec_dir", default=None, help="Directory to write per-file ScoreSpec JSON")
+    ap.add_argument("--clear", action="store_true", help="Clear database before processing")
     args = ap.parse_args()
 
     con = connect_db(args.db)
+    
+    if args.clear:
+        clear_database(con)
+    
     midi_files = sorted(Path().glob(args.in_glob))
     if not midi_files:
         print("No MIDI files matched your glob.")
