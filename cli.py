@@ -8,7 +8,7 @@ from extractors import symbolic  # your existing/earlier symbolic extractor modu
 from extractors import audio as audio_ext
 from extractors import graph as graph_ext
 from assemble.section_merge import merge_for_song
-from assemble.caption import caption_for_song, captions_by_section
+from assemble.caption import caption_for_song, captions_by_section, caption_medium, slots_for_section
 
 def main():
     ap = argparse.ArgumentParser(description="MusicCap pipeline")
@@ -17,6 +17,7 @@ def main():
     ap.add_argument("--sf2", default=None, help="SoundFont (.sf2) for fluidsynth (optional)")
     ap.add_argument("--render_dir", default="cache", help="Where to write WAV renders")
     ap.add_argument("--skip_audio", action="store_true", help="Skip audio rendering/features")
+    ap.add_argument("--caption_mode", choices=["short","medium"], default="short", help="Caption detail level")
     args = ap.parse_args()
 
     con = connect(args.db)
@@ -66,8 +67,14 @@ def main():
 
         # 5) Captions
         try:
-            print("Song caption:", caption_for_song(con, song_id))
-            for sid, txt in captions_by_section(con, song_id, mode="short"):
+            if args.caption_mode == "medium":
+                # Build medium caption for whole song
+                slots = slots_for_section(con, song_id, section_id=None)
+                song_txt = caption_medium(slots)
+            else:
+                song_txt = caption_for_song(con, song_id)
+            print("Song caption:", song_txt)
+            for sid, txt in captions_by_section(con, song_id, mode=args.caption_mode):
                 print(f"  {sid}: {txt}")
         except Exception as e:
             print("Captioning failed:", e)
