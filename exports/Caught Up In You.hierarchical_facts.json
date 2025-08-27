@@ -1,0 +1,37 @@
+{
+  "structure": [
+    "Piece has 11 sections spanning 94 bars",
+    "Section lengths vary: 7-13 bars",
+    "Piece appears to have a multi-section form structure"
+  ],
+  "harmony": [
+    "Piece has 10269 harmonic sections",
+    "Uses 8 unique pitch classes",
+    "Average harmonic rhythm: 0.0 bars per chord"
+  ],
+  "orchestration": [
+    "Piece uses 5 instrument tracks",
+    "Uses 4 unique MIDI programs"
+  ],
+  "rhythm": [
+    "Piece is in 4/4 time signature",
+    "Tempo is approximately 120 BPM",
+    "Rhythmic analysis based on section structure and tempo"
+  ],
+  "relationships": [
+    "Musical structure contains 51 elements",
+    "Contains 121 musical relationships",
+    "Has 114 OCCURS_IN relationships",
+    "Has 6 DOUBLES relationships",
+    "Has 1 RHYTHMIC_LOCK relationships"
+  ],
+  "controllers": [],
+  "motifs": [
+    "Piece contains 27 musical motifs",
+    "Total motif occurrences: 225"
+  ],
+  "form": [
+    "Piece is substantial in length (over 64 bars)",
+    "Piece has a medium-sized ensemble"
+  ]
+}

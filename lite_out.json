@@ -1,0 +1,524 @@
+﻿{
+  "meta": {
+    "title": "Caught Up In You",
+    "bars": 94,
+    "duration_estimate": 188.0
+  },
+  "tempo_map": [
+    {
+      "bar": 1,
+      "bpm": 120
+    }
+  ],
+  "sections": [
+    {
+      "id": "M1",
+      "bars": [
+        1,
+        8
+      ],
+      "density": {
+        "bars": [
+          1,
+          8
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "M2",
+      "bars": [
+        9,
+        16
+      ],
+      "density": {
+        "bars": [
+          9,
+          16
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "M3",
+      "bars": [
+        17,
+        24
+      ],
+      "density": {
+        "bars": [
+          17,
+          24
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "M4",
+      "bars": [
+        25,
+        32
+      ],
+      "density": {
+        "bars": [
+          25,
+          32
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "M5",
+      "bars": [
+        33,
+        40
+      ],
+      "density": {
+        "bars": [
+          33,
+          40
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "M6",
+      "bars": [
+        41,
+        48
+      ],
+      "density": {
+        "bars": [
+          41,
+          48
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "M7",
+      "bars": [
+        49,
+        56
+      ],
+      "density": {
+        "bars": [
+          49,
+          56
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "M8",
+      "bars": [
+        57,
+        64
+      ],
+      "density": {
+        "bars": [
+          57,
+          64
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "M9",
+      "bars": [
+        65,
+        72
+      ],
+      "density": {
+        "bars": [
+          65,
+          72
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "M10",
+      "bars": [
+        73,
+        80
+      ],
+      "density": {
+        "bars": [
+          73,
+          80
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "id": "M11",
+      "bars": [
+        81,
+        94
+      ],
+      "density": {
+        "bars": [
+          81,
+          94
+        ],
+        "estimated_density": "medium"
+      },
+      "instruments_active": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "harmony_summary": [
+    {
+      "section": "M1",
+      "pitch_classes": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9,
+        11
+      ],
+      "complexity": 7,
+      "coverage": 1.0
+    },
+    {
+      "section": "M2",
+      "pitch_classes": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9,
+        11
+      ],
+      "complexity": 7,
+      "coverage": 1.0
+    },
+    {
+      "section": "M3",
+      "pitch_classes": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9,
+        10,
+        11
+      ],
+      "complexity": 8,
+      "coverage": 1.0
+    },
+    {
+      "section": "M4",
+      "pitch_classes": [
+        1,
+        4,
+        6,
+        8,
+        9,
+        11
+      ],
+      "complexity": 6,
+      "coverage": 1.0
+    },
+    {
+      "section": "M5",
+      "pitch_classes": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9,
+        11
+      ],
+      "complexity": 7,
+      "coverage": 1.0
+    },
+    {
+      "section": "M6",
+      "pitch_classes": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9,
+        11
+      ],
+      "complexity": 7,
+      "coverage": 1.0
+    },
+    {
+      "section": "M7",
+      "pitch_classes": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9,
+        11
+      ],
+      "complexity": 7,
+      "coverage": 1.0
+    },
+    {
+      "section": "M8",
+      "pitch_classes": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9,
+        10,
+        11
+      ],
+      "complexity": 8,
+      "coverage": 1.0
+    },
+    {
+      "section": "M9",
+      "pitch_classes": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9,
+        11
+      ],
+      "complexity": 7,
+      "coverage": 1.0
+    },
+    {
+      "section": "M10",
+      "pitch_classes": [
+        1,
+        3,
+        4,
+        6,
+        8,
+        9,
+        11
+      ],
+      "complexity": 7,
+      "coverage": 1.0
+    },
+    {
+      "section": "M11",
+      "pitch_classes": [
+        1,
+        4,
+        6,
+        8,
+        9,
+        10,
+        11
+      ],
+      "complexity": 7,
+      "coverage": 1.0
+    }
+  ],
+  "motif_inventory": [],
+  "relationships": [
+    {
+      "type": "OCCURS_IN",
+      "from": "trk:t0",
+      "to": "sec:M10",
+      "bars": [
+        73,
+        80
+      ],
+      "details": {}
+    },
+    {
+      "type": "OCCURS_IN",
+      "from": "trk:t1",
+      "to": "sec:M2",
+      "bars": [
+        9,
+        16
+      ],
+      "details": {}
+    },
+    {
+      "type": "OCCURS_IN",
+      "from": "trk:t3",
+      "to": "sec:S6",
+      "bars": [
+        41,
+        48
+      ],
+      "details": {}
+    },
+    {
+      "type": "OCCURS_IN",
+      "from": "trk:t0",
+      "to": "sec:M2",
+      "bars": [
+        9,
+        16
+      ],
+      "details": {}
+    },
+    {
+      "type": "OCCURS_IN",
+      "from": "trk:t2",
+      "to": "sec:S12",
+      "bars": [
+        89,
+        94
+      ],
+      "details": {}
+    },
+    {
+      "type": "OCCURS_IN",
+      "from": "trk:t3",
+      "to": "sec:S11",
+      "bars": [
+        81,
+        88
+      ],
+      "details": {}
+    },
+    {
+      "type": "OCCURS_IN",
+      "from": "trk:t1",
+      "to": "sec:M9",
+      "bars": [
+        65,
+        72
+      ],
+      "details": {}
+    },
+    {
+      "type": "OCCURS_IN",
+      "from": "trk:t2",
+      "to": "sec:M4",
+      "bars": [
+        25,
+        32
+      ],
+      "details": {}
+    },
+    {
+      "type": "OCCURS_IN",
+      "from": "trk:t3",
+      "to": "sec:S12",
+      "bars": [
+        89,
+        94
+      ],
+      "details": {}
+    },
+    {
+      "type": "OCCURS_IN",
+      "from": "trk:t2",
+      "to": "sec:M9",
+      "bars": [
+        65,
+        72
+      ],
+      "details": {}
+    }
+  ],
+  "evidence_refs": [
+    {
+      "kind": "notes",
+      "bars": [
+        1,
+        94
+      ],
+      "description": "Full note data available via database queries"
+    },
+    {
+      "kind": "controllers",
+      "description": "Controller data available via database queries"
+    },
+    {
+      "kind": "graph",
+      "description": "Full graph structure available in DB"
+    }
+  ]
+}
