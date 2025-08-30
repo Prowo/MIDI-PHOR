@@ -59,3 +59,7 @@ Thumbs.db
 # Generated ScoreSpec files
 scorespec_json/
 
+# Build artifacts and large generated outputs
+exports/
+clean_audio/
+
