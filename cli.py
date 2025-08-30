@@ -13,7 +13,8 @@ from assemble.caption import caption_for_song, captions_by_section, caption_medi
 def main():
     ap = argparse.ArgumentParser(description="MusicCap pipeline")
     ap.add_argument("--db", default="data/musiccap.duckdb", help="DuckDB path")
-    ap.add_argument("--midi_glob", required=True, help="Glob e.g. 'data/**/*.mid'")
+    ap.add_argument("--midi_glob", required=False, help="Glob e.g. 'data/**/*.mid'")
+    ap.add_argument("--audio_glob", required=False, help="Glob e.g. 'data/**/*.wav' (original audio)")
     ap.add_argument("--sf2", default=None, help="SoundFont (.sf2) for fluidsynth (optional)")
     ap.add_argument("--render_dir", default="cache", help="Where to write WAV renders")
     ap.add_argument("--skip_audio", action="store_true", help="Skip audio rendering/features")
@@ -23,30 +24,41 @@ def main():
     con = connect(args.db)
     ensure_schema(con)
 
-    midi_files = sorted(Path().glob(args.midi_glob))
-    if not midi_files:
-        print("No files matched.")
+    midi_files = sorted(Path().glob(args.midi_glob)) if args.midi_glob else []
+    audio_files = sorted(Path().glob(args.audio_glob)) if args.audio_glob else []
+    if not midi_files and not audio_files:
+        print("No files matched (MIDI or audio).")
         return
 
     os.makedirs(args.render_dir, exist_ok=True)
 
-    for midi in midi_files:
-        song_id = midi.stem
+    # Build a song list from both sources by stem
+    by_stem = {}
+    for p in midi_files:
+        by_stem.setdefault(p.stem, {})['midi'] = p
+    for p in audio_files:
+        by_stem.setdefault(p.stem, {})['audio'] = p
+
+    for stem, rec in by_stem.items():
+        song_id = stem
         print(f"\n=== {song_id} ===")
 
         # 1) Symbolic
-        try:
-            symbolic.run(song_id, str(midi), con)  # from the symbolic module you already have
-            print("Symbolic: OK")
-        except Exception as e:
-            print("Symbolic failed:", e); continue
+        midi_path = str(rec['midi']) if 'midi' in rec else None
+        if midi_path:
+            try:
+                symbolic.run(song_id, midi_path, con)
+                print("Symbolic: OK")
+            except Exception as e:
+                print("Symbolic failed:", e)
 
         # 2) Audio (optional)
         if not args.skip_audio:
             try:
                 cfg = audio_ext.AudioConfig(soundfont_path=args.sf2)
                 wav_out = str(Path(args.render_dir) / f"{song_id}.wav")
-                audio_ext.run(song_id, str(midi), con, wav_out=wav_out, cfg=cfg)
+                audio_in = str(rec['audio']) if 'audio' in rec else None
+                audio_ext.run(song_id, midi_path, con, wav_out=wav_out, audio_in=audio_in, cfg=cfg)
                 print("Audio: OK")
             except Exception as e:
                 print("Audio failed:", e)

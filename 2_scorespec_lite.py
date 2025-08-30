@@ -28,7 +28,7 @@ class ScoreSpecComputer:
             return float(bpm) if bpm else None
         row = self.con.execute("SELECT ROUND(AVG(qpm),0) FROM bars WHERE song_id=?", [self.file_id]).fetchone()
         return float(row[0]) if row and row[0] is not None else None
-
+        
     def get_total_bars(self) -> int:
         if self.con and self.file_id:
             row = self.con.execute("SELECT COALESCE(MAX(bar),0) FROM bars WHERE song_id=?", [self.file_id]).fetchone()
@@ -74,7 +74,7 @@ class ScoreSpecComputer:
         # Fallback: single BPM
         bpm = int(round(self._avg_bpm() or 120.0))
         return [{"bar": 1, "bpm": bpm}]
-
+    
     def _song_bar_note_counts(self) -> List[int]:
         if not (self.con and self.file_id):
             return []
@@ -143,7 +143,7 @@ class ScoreSpecComputer:
         # Fallback to all instruments listed in full_spec
         instruments = (self.full_spec.get('instruments') or [])
         return [inst.get('track_id') for inst in instruments]
-
+    
     def compute_sections(self) -> List[Dict[str, Any]]:
         sections: List[Tuple[str, int, int]] = []
         if self.con and self.file_id:
@@ -151,11 +151,21 @@ class ScoreSpecComputer:
                 """
                 SELECT section_id, start_bar, end_bar
                 FROM sections
-                WHERE song_id=?
+                WHERE song_id=? AND source='merged'
                 ORDER BY start_bar
                 """,
                 [self.file_id],
             ).fetchall()
+            if not rows:
+                rows = self.con.execute(
+                    """
+                    SELECT section_id, start_bar, end_bar
+                    FROM sections
+                    WHERE song_id=?
+                    ORDER BY start_bar
+                    """,
+                    [self.file_id],
+                ).fetchall()
             sections = [(sid, int(sb), int(eb)) for sid, sb, eb in rows]
         if not sections:
             for seg in (self.full_spec.get('segments') or []):
@@ -216,18 +226,18 @@ class ScoreSpecComputer:
             for s in secs:
                 sb, eb = int(s['bars'][0]), int(s['bars'][1])
                 pcs: List[int] = []
-                for span in pitch_spans:
+            for span in pitch_spans:
                     spb = span.get('bars', [0, 0])
                     if (spb[0] <= eb and spb[1] >= sb):
                         pcs.extend(span.get('pcs', []))
-                if pcs:
-                    uniq = set(pcs)
-                    results.append({
-                        "section": s['id'],
-                        "pitch_classes": list(uniq)[:8],
-                        "complexity": len(uniq),
-                        "coverage": 1.0,
-                    })
+                    if pcs:
+                        uniq = set(pcs)
+                        results.append({
+                            "section": s['id'],
+                            "pitch_classes": list(uniq)[:8],
+                            "complexity": len(uniq),
+                            "coverage": 1.0,
+                        })
         return results
 
     def compute_motif_inventory(self) -> List[Dict[str, Any]]:
@@ -238,25 +248,39 @@ class ScoreSpecComputer:
                 [self.file_id],
             ).fetchall()
             import json as _json
+            # Aggregate by exact pattern string to avoid duplicates
+            agg: Dict[str, Dict[str, Any]] = {}
             for mid, pattern, occ_json, support in rows:
-                locs: List[Dict[str, Any]] = []
+                patt = str(pattern or "")
+                entry = agg.setdefault(patt, {"id": str(mid), "pattern": patt, "occurrences": 0, "locations": []})
+                entry["occurrences"] += int(support or 0)
                 try:
                     arr = _json.loads(occ_json) if occ_json else []
-                    seen = set()
                     for o in arr:
                         b = int(o.get("bar", 0))
-                        key = (b,)
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        locs.append({"bars": [b, b]})
+                        tr = o.get("track_id") if (isinstance(o, dict) and ("track_id" in o or "track" in o)) else o.get("track") if isinstance(o, dict) else None
+                        loc = {"bars": [b, b]}
+                        if tr is not None:
+                            loc["track"] = tr
+                        entry["locations"].append(loc)
                 except Exception:
                     pass
+            # Dedup locations within each pattern and cap to first 3
+            out = []
+            for patt, entry in agg.items():
+                seen_locs = set()
+                uniq_locs: List[Dict[str, Any]] = []
+                for loc in entry["locations"]:
+                    key = (loc.get("track"), loc["bars"][0], loc["bars"][1])
+                    if key in seen_locs:
+                        continue
+                    seen_locs.add(key)
+                    uniq_locs.append(loc)
                 out.append({
-                    "id": str(mid),
-                    "pattern": str(pattern or ""),
-                    "occurrences": int(support or len(locs)),
-                    "locations": locs[:3],
+                    "id": entry["id"],
+                    "pattern": patt,
+                    "occurrences": int(entry["occurrences"] or len(uniq_locs)),
+                    "locations": uniq_locs[:3],
                 })
             # Keep top-N by occurrences
             out.sort(key=lambda m: m.get("occurrences", 0), reverse=True)
@@ -333,17 +357,17 @@ class ScoreSpecComputer:
 
 class ScoreSpecLiteGenerator:
     """Generates compact, hierarchical ScoreSpec-Lite format using a computer."""
-
+        
     def __init__(self, computer: ScoreSpecComputer):
         self.c = computer
-
+    
     def create_drill_down_pointers(self) -> List[Dict[str, Any]]:
         return [
             {"kind": "notes", "bars": [1, self.c.get_total_bars()], "description": "Full note data available via database queries"},
             {"kind": "controllers", "description": "Controller data available via database queries"},
             {"kind": "graph", "description": "Full graph structure available in DB"},
         ]
-
+    
     def generate_scorespec_lite(self) -> Dict[str, Any]:
         return {
             "meta": self.c.compute_meta(),
@@ -408,6 +432,53 @@ class ScoreSpecLiteGenerator:
                 return None
             return None
 
+        def interpret_step_pattern(p: str) -> Optional[str]:
+            # Pattern like "i-2:d3 i0:d3 i2:d3" → steps [-2, 0, +2]
+            try:
+                tokens = [t for t in p.split() if t.startswith('i')]
+                if not tokens:
+                    return None
+                steps: List[int] = []
+                for t in tokens:
+                    core = t.split(':')[0]  # i-2
+                    val = core[1:]
+                    steps.append(int(val))
+                return "steps [" + ", ".join([f"{s:+d}" for s in steps]) + "]"
+            except Exception:
+                return None
+
+        def simplify_chord_name(name: str) -> str:
+            if not name:
+                return name
+            n = str(name)
+            n = n.replace('-major triad', '').replace('-minor triad', 'm')
+            n = n.replace(' major triad', '').replace(' minor triad', 'm')
+            n = n.replace(' triad', '')
+            # collapse double spaces and odd phrasing
+            n = n.replace('enharmonic equivalent to ', '')
+            n = n.replace('above ', '').replace('Perfect ', '').replace('Diminished ', '')
+            return n.strip()
+
+        def format_node(node_id: str) -> str:
+            if not isinstance(node_id, str):
+                return str(node_id)
+            if node_id.startswith('trk:'):
+                tid = node_id.split(':', 1)[1]
+                # try exact match, support numeric and 'tX' forms
+                candidates = [tid]
+                if tid.isdigit():
+                    candidates.append(f"t{tid}")
+                for c in candidates:
+                    info = track_info.get(c)
+                    if info:
+                        nm = info.get('name') or c
+                        rl = info.get('role') or ''
+                        return f"{nm} ({rl})".strip()
+                return node_id
+            if node_id.startswith('sec:'):
+                return f"Section {node_id.split(':',1)[1]}"
+            return node_id
+
         lines: List[str] = []
         title = meta.get('title', 'Unknown')
         bars = meta.get('bars', 0)
@@ -431,7 +502,8 @@ class ScoreSpecLiteGenerator:
             dens = (s.get('density') or {}).get('estimated_density', 'unknown')
             active = s.get('instruments_active') or []
             typ = section_types.get(sid, '')
-            if typ:
+            # Hide noisy 'other' label
+            if typ and str(typ).lower() != 'other':
                 header = f"Section {sid} ({typ}) [{sb}-{eb}]"
             else:
                 header = f"Section {sid} [{sb}-{eb}]"
@@ -444,9 +516,29 @@ class ScoreSpecLiteGenerator:
                 rl = info.get('role') or 'other'
                 names.append(nm)
                 roles[rl] = roles.get(rl, 0) + 1
-            names_str = ", ".join(names[:3]) + (" …" if len(names) > 3 else "")
+            # Show up to 6 names, then +N more
+            max_names = 6
+            extra = len(names) - max_names
+            if extra > 0:
+                names_str = ", ".join(names[:max_names]) + f" (+{extra} more)"
+            else:
+                names_str = ", ".join(names)
             role_bits = ", ".join([f"{r}:{c}" for r, c in sorted(roles.items(), key=lambda kv: kv[1], reverse=True)[:3]])
             lines.append(f"{header}: density {dens}; active tracks {len(active)} — {names_str} | roles {role_bits}")
+
+        # Instrument roster
+        if track_info:
+            roster_all = []
+            for tid, info in track_info.items():
+                nm = info.get('name') or str(tid)
+                rl = info.get('role') or 'other'
+                roster_all.append(f"{nm} ({rl})")
+            max_roster = 12
+            if len(roster_all) > max_roster:
+                remaining = len(roster_all) - max_roster
+                lines.append("Instruments: " + ", ".join(roster_all[:max_roster]) + f" (+{remaining} more)")
+            else:
+                lines.append("Instruments: " + ", ".join(roster_all))
 
         # Harmony details per section (top chord names) if available
         if self.c.con and self.c.file_id and sections:
@@ -467,7 +559,8 @@ class ScoreSpecLiteGenerator:
                         [self.c.file_id, int(sb), int(eb)],
                     ).fetchall()
                     if rows:
-                        top = ", ".join([f"{n}×{c}" for n, c in rows])
+                        simp = [simplify_chord_name(n) for n, _ in rows]
+                        top = ", ".join([f"{simp[i]}×{rows[i][1]}" for i in range(len(rows))])
                         lines.append(f"- {sid}: {top}")
             except Exception:
                 pass
@@ -482,7 +575,11 @@ class ScoreSpecLiteGenerator:
                 if interp:
                     lines.append(f"- '{patt}' ({interp}): {occ} occurrences")
                 else:
-                    lines.append(f"- '{patt}': {occ} occurrences")
+                    steps = interpret_step_pattern(patt)
+                    if steps:
+                        lines.append(f"- '{patt}' ({steps}): {occ} occurrences")
+                    else:
+                        lines.append(f"- '{patt}': {occ} occurrences")
 
         # Relationship highlights
         try:
@@ -491,7 +588,7 @@ class ScoreSpecLiteGenerator:
                 lines.append("Relationships:")
                 for r in rels:
                     sb, eb = r.get('bars', [0, 0])
-                    lines.append(f"- {r.get('type')}: {r.get('from')} → {r.get('to')} [{sb}-{eb}]")
+                    lines.append(f"- {r.get('type')}: {format_node(r.get('from'))} → {format_node(r.get('to'))} [{sb}-{eb}]")
         except Exception:
             pass
 

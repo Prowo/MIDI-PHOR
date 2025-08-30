@@ -9,6 +9,7 @@ import duckdb
 import librosa
 import soundfile as sf
 import pretty_midi
+import json
 
 from utils.ids import deterministic_id
 
@@ -23,6 +24,16 @@ class AudioConfig:
     repeat_sim_thresh: float = 0.85
     soundfont_path: Optional[str] = None  # .sf2 for pretty_midi.fluidsynth
     render_gain_db: float = 0.0
+    # Essentia model paths (optional)
+    emb_model_path: Optional[str] = None
+    mood_model_path: Optional[str] = None
+    mood_classes_json: Optional[str] = None
+    genre_model_path: Optional[str] = None
+    genre_classes_json: Optional[str] = None
+    mood_top_n: int = 5
+    mood_threshold: float = 0.02
+    genre_top_n: int = 4
+    genre_threshold: float = 0.05
 
 # ---------- Rendering ----------
 
@@ -31,8 +42,8 @@ def render_midi_to_wav(midi_path: str, wav_out: str, cfg: AudioConfig) -> str:
     if cfg.soundfont_path:
         audio = pm.fluidsynth(fs=cfg.sr, sf2_path=cfg.soundfont_path)
     else:
-        # fallback synth (simple): sum sine tones — not great, but OK for features
-        audio = pm.fluidsynth(fs=cfg.sr)
+        # fallback synth (simple): PrettyMIDI's built-in sine-wave synthesizer
+        audio = pm.synthesize(fs=cfg.sr)
     # normalize + gain
     if np.max(np.abs(audio)) > 0:
         audio = audio / np.max(np.abs(audio))
@@ -40,18 +51,54 @@ def render_midi_to_wav(midi_path: str, wav_out: str, cfg: AudioConfig) -> str:
         audio = audio * (10 ** (cfg.render_gain_db / 20.0))
     sf.write(wav_out, audio, cfg.sr)
     return wav_out
+def _ensure_bars_from_audio_if_missing(con: duckdb.DuckDBPyConnection, song_id: str, wav_path: str, cfg: AudioConfig) -> None:
+    """
+    If no symbolic bars exist, derive approximate bars from beat tracking (assume 4/4).
+    Writes to bars(song_id, bar, start_sec, end_sec, num, den, qpm).
+    """
+    has_bars = con.execute("SELECT 1 FROM bars WHERE song_id=? LIMIT 1", [song_id]).fetchone()
+    if has_bars:
+        return
+    try:
+        y, sr = librosa.load(wav_path, sr=cfg.sr, mono=True)
+        # Onset envelope for robust beat tracking
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=cfg.hop_length)
+        tempo, beats = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr, hop_length=cfg.hop_length)
+        beat_times = librosa.frames_to_time(beats, sr=sr, hop_length=cfg.hop_length)
+        if len(beat_times) == 0:
+            return
+        # Group every 4 beats into a bar (approx 4/4)
+        bars = []
+        bar_no = 1
+        for i in range(0, len(beat_times), 4):
+            start_sec = float(beat_times[i])
+            if i + 4 < len(beat_times):
+                end_sec = float(beat_times[i + 4])
+            else:
+                # last partial bar: extend to last audio time or last beat
+                end_sec = float(beat_times[-1])
+            bars.append((song_id, bar_no, start_sec, end_sec, 4, 4, float(tempo)))
+            bar_no += 1
+        if bars:
+            con.executemany(
+                "INSERT OR REPLACE INTO bars (song_id, bar, start_sec, end_sec, num, den, qpm) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                bars,
+            )
+    except Exception:
+        # non-fatal: continue without bar aggregation
+        pass
+
 
 # ---------- Frames → DB ----------
 
 def _store_frames(con: duckdb.DuckDBPyConnection, song_id: str, feature: str, t_ms: np.ndarray, values: np.ndarray) -> None:
-    if len(values) == 0: return
-    con.register("tmp_frames", 
-                 [(song_id, feature, int(ms), float(ms)/1000.0, float(v)) for ms, v in zip(t_ms.astype(int), values)])
-    con.execute("""
-        INSERT OR REPLACE INTO ts_frame (song_id, feature, t_ms, t_sec, value)
-        SELECT * FROM tmp_frames
-    """)
-    con.unregister("tmp_frames")
+    if len(values) == 0:
+        return
+    rows = [(song_id, feature, int(ms), float(ms) / 1000.0, float(v)) for ms, v in zip(t_ms.astype(int), values)]
+    con.executemany(
+        "INSERT OR REPLACE INTO ts_frame (song_id, feature, t_ms, t_sec, value) VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
 
 def _aggregate_frames_to_bars(con: duckdb.DuckDBPyConnection, song_id: str, feature: str, out_feature: str, agg: str = "AVG") -> None:
     con.execute(f"""
@@ -205,7 +252,8 @@ def _ensure_symbolic_family_counts(con: duckdb.DuckDBPyConnection, song_id: str)
     Uses tracks.role when available; falls back to GM program/is_drum heuristics.
     """
     # Add a temp view 'track_family'
-    con.execute("""
+    # Avoid prepared parameter in DDL by formatting song_id directly (safe: song_id is internal id)
+    con.execute(f"""
         CREATE TEMP VIEW IF NOT EXISTS __track_family AS
         SELECT
           t.song_id,
@@ -221,16 +269,16 @@ def _ensure_symbolic_family_counts(con: duckdb.DuckDBPyConnection, song_id: str)
                 END
             ELSE
                 CASE
-                  WHEN t.gm_program BETWEEN 32 AND 39 THEN 'bass'      -- GM bass family (approx)
-                  WHEN t.gm_program BETWEEN 88 AND 95 THEN 'pad'       -- GM pad 1..8
-                  WHEN t.gm_program BETWEEN 80 AND 87 THEN 'melody'    -- GM lead 1..8
-                  WHEN t.gm_program BETWEEN 115 AND 119 THEN 'drums'   -- extra perc FX guard
+                  WHEN t.gm_program BETWEEN 32 AND 39 THEN 'bass'
+                  WHEN t.gm_program BETWEEN 88 AND 95 THEN 'pad'
+                  WHEN t.gm_program BETWEEN 80 AND 87 THEN 'melody'
+                  WHEN t.gm_program BETWEEN 115 AND 119 THEN 'drums'
                   ELSE 'other'
                 END
           END AS family
         FROM tracks t
-        WHERE t.song_id=?
-    """, [song_id])
+        WHERE t.song_id='{song_id}'
+    """)
 
     # active_tracks
     con.execute("""
@@ -299,9 +347,11 @@ def _repeat_score_from_chroma(con: duckdb.DuckDBPyConnection, song_id: str, wind
         sims = Vn[:i] @ Vn[i].T
         scores[i] = float(np.max(sims))
 
-    con.register("tmp_repeat", [(song_id, int(b), "repeat_score_bar", float(s)) for b, s in zip(bars, scores)])
-    con.execute("INSERT OR REPLACE INTO ts_bar (song_id, bar, feature, value) SELECT * FROM tmp_repeat")
-    con.unregister("tmp_repeat")
+    rep_rows = [(song_id, int(b), "repeat_score_bar", float(s)) for b, s in zip(bars, scores)]
+    con.executemany(
+        "INSERT OR REPLACE INTO ts_bar (song_id, bar, feature, value) VALUES (?, ?, ?, ?)",
+        rep_rows,
+    )
 
     # Recurrence density per bar using affinity recurrence matrix
     try:
@@ -311,9 +361,11 @@ def _repeat_score_from_chroma(con: duckdb.DuckDBPyConnection, song_id: str, wind
         n = R.shape[0]
         denom = max(1, n - 1)
         dens = (np.sum(R, axis=1) - 1.0) / denom
-        con.register("tmp_recd", [(song_id, int(b), "recurrence_density_bar", float(d)) for b, d in zip(bars, dens)])
-        con.execute("INSERT OR REPLACE INTO ts_bar (song_id, bar, feature, value) SELECT * FROM tmp_recd")
-        con.unregister("tmp_recd")
+        rec_rows = [(song_id, int(b), "recurrence_density_bar", float(d)) for b, d in zip(bars, dens)]
+        con.executemany(
+            "INSERT OR REPLACE INTO ts_bar (song_id, bar, feature, value) VALUES (?, ?, ?, ?)",
+            rec_rows,
+        )
         _compute_z_and_delta(con, song_id, "recurrence_density_bar")
     except Exception:
         pass
@@ -383,11 +435,11 @@ def _emit_events(con: duckdb.DuckDBPyConnection, song_id: str, cfg: AudioConfig)
         """, [song_id])
 
     # CADENCE: simple V→I detection if chords present (count per bar)
-    con.execute("""
+    con.execute(f"""
         CREATE TEMP VIEW IF NOT EXISTS __chords AS
         SELECT onset_bar AS bar, rn
-        FROM chords WHERE song_id=? ORDER BY onset_bar, onset_beat
-    """, [song_id])
+        FROM chords WHERE song_id='{song_id}' ORDER BY onset_bar, onset_beat
+    """)
     # count V->I transitions occurring at this bar or previous
     con.execute("""
         WITH seq AS (
@@ -448,41 +500,159 @@ def _emit_events(con: duckdb.DuckDBPyConnection, song_id: str, cfg: AudioConfig)
 
 def _predict_tags(con: duckdb.DuckDBPyConnection, song_id: str) -> None:
     """
-    Placeholder: attach simple tags based on features. Replace with Essentia/CLAP later.
+    Attach audio tags using Essentia MTG models if configured; otherwise fallback to energy heuristic.
     """
-    # Mood heuristic from energy_z
+    try:
+        from essentia.standard import MonoLoader, TensorflowPredictEffnetDiscogs, TensorflowPredict2D
+        cfg_rows = con.execute("SELECT ? AS emb, ? AS mood_m, ? AS mood_c, ? AS genre_m, ? AS genre_c", [
+            None, None, None, None, None
+        ]).fetchone()
+        # Not used: AudioConfig is not accessible here directly; rely on defaults/fallback
+        wav_path = None
+        # Attempt to find cached render
+        cand = os.path.join("cache", f"{song_id}.wav")
+        if os.path.exists(cand):
+            wav_path = cand
+        # or check common alt path
+        alt = os.path.join("clean_audio", f"{song_id}.wav")
+        if wav_path is None and os.path.exists(alt):
+            wav_path = alt
+        if wav_path is None:
+            raise RuntimeError("no audio file found for tagging")
+
+        audio = MonoLoader(filename=wav_path, sampleRate=16000, resampleQuality=1)()
+        if len(audio) < 16000 * 3:
+            raise RuntimeError("audio too short for tagging")
+
+        # These will raise if models are missing; fall through to heuristic
+        emb_model = TensorflowPredictEffnetDiscogs(graphFilename=os.environ.get("ESS_EMB_MODEL",""), output="PartitionedCall:1")
+        mood_model = TensorflowPredict2D(graphFilename=os.environ.get("ESS_MOOD_MODEL",""))
+        genre_model = TensorflowPredict2D(graphFilename=os.environ.get("ESS_GENRE_MODEL",""))
+        mood_json = os.environ.get("ESS_MOOD_JSON","")
+        genre_json = os.environ.get("ESS_GENRE_JSON","")
+
+        def _top_tags(emb, model, classes_json, top_n, thr):
+            with open(classes_json, "r") as f:
+                meta = json.load(f)
+            preds = model(emb)
+            mean_act = np.mean(preds, axis=0)
+            idx = np.argpartition(mean_act, -top_n)[-top_n:]
+            pairs = [(meta['classes'][i], float(mean_act[i])) for i in idx if mean_act[i] >= thr]
+            pairs.sort(key=lambda x: -x[1])
+            return pairs
+
+        emb = emb_model(audio)
+        mood_pairs = _top_tags(emb, mood_model, mood_json, top_n=5, thr=0.02)
+        genre_pairs = _top_tags(emb, genre_model, genre_json, top_n=4, thr=0.05)
+
+        # write to tags_section at global scope
+        rows = []
+        for tag, conf in mood_pairs:
+            rows.append((song_id, 'S_global', 'mood', tag, float(conf)))
+        for tag, conf in genre_pairs:
+            rows.append((song_id, 'S_global', 'genre', tag, float(conf)))
+        if rows:
+            con.executemany(
+                "INSERT OR REPLACE INTO tags_section (song_id, section_id, tag_type, tag, confidence) VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+        return
+    except Exception:
+        pass
+
+    # Fallback: Mood heuristic from energy_z quartiles (zero-mean guard)
     con.execute("""
-        WITH avgz AS (
-          SELECT AVG(value) AS z FROM ts_bar
-          WHERE song_id=? AND feature='energy_bar_z'
+        WITH ez AS (
+          SELECT value FROM ts_bar WHERE song_id=? AND feature='energy_bar_z'
+        ),
+        q AS (
+          SELECT quantile_cont(value, 0.75) AS q75,
+                 quantile_cont(value, 0.25) AS q25
+          FROM ez
         )
         INSERT OR REPLACE INTO tags_section (song_id, section_id, tag_type, tag, confidence)
         SELECT ?, 'S_global', 'mood',
-               CASE WHEN z >= 0.5 THEN 'energetic'
-                    WHEN z <= -0.5 THEN 'mellow'
+               CASE WHEN q75 >= 0.5 THEN 'energetic'
+                    WHEN q25 <= -0.5 THEN 'mellow'
                     ELSE 'neutral' END,
-               ABS(z)
-        FROM avgz
+               CASE WHEN q75 >= ABS(q25) THEN q75 ELSE ABS(q25) END
+        FROM q
     """, [song_id, song_id])
+
+    # Heuristic genre tags using spectral + rhythm summaries
+    stats = con.execute("""
+        SELECT
+          AVG(CASE WHEN feature='brightness_bar_z' THEN value END) AS bright_z,
+          AVG(CASE WHEN feature='rolloff_bar_z'    THEN value END) AS roll_z,
+          AVG(CASE WHEN feature='flatness_bar_z'   THEN value END) AS flat_z,
+          AVG(CASE WHEN feature='zcr_bar_z'        THEN value END) AS zcr_z,
+          AVG(CASE WHEN feature='onset_strength_bar_z' THEN value END) AS onset_z,
+          AVG(CASE WHEN feature='tempo_bar'        THEN value END) AS tempo_avg,
+          AVG(CASE WHEN feature='repeat_score_bar' THEN value END) AS rep_avg,
+          AVG(CASE WHEN feature='active_drums'     THEN value END) AS drums_avg
+        FROM ts_bar WHERE song_id=?
+    """, [song_id]).fetchone()
+    if stats is not None:
+        bright_z, roll_z, flat_z, zcr_z, onset_z, tempo_avg, rep_avg, drums_avg = [s if s is not None else 0.0 for s in stats]
+
+        def clip01(x: float) -> float:
+            return float(max(0.0, min(1.0, x)))
+
+        # Simple scores
+        electronic_score = clip01(max(flat_z, zcr_z) / 2.0 + max(0.0, roll_z) * 0.1)
+        rock_score = clip01((max(0.0, bright_z) + max(0.0, onset_z)) / 2.0 + (drums_avg or 0.0) * 0.1)
+        pop_score = clip01((rep_avg or 0.0) * 0.6 + (1.0 - electronic_score) * 0.2 + (1.0 if 90 <= (tempo_avg or 0.0) <= 130 else 0.0) * 0.2)
+        acoustic_score = clip01((max(0.0, -flat_z) + max(0.0, -zcr_z)) / 2.0 + max(0.0, -bright_z) * 0.2)
+        ambient_score = clip01((max(0.0, -onset_z) + max(0.0, -bright_z)) / 2.0 + (1.0 if (tempo_avg or 0.0) < 80 else 0.0) * 0.2)
+
+        genre_pairs = [
+            ("electronic", electronic_score),
+            ("rock", rock_score),
+            ("pop", pop_score),
+            ("acoustic", acoustic_score),
+            ("ambient", ambient_score),
+        ]
+        genre_pairs = [(g, float(round(c, 3))) for g, c in genre_pairs if c >= 0.25]
+        genre_pairs.sort(key=lambda x: -x[1])
+        genre_pairs = genre_pairs[:3]
+        if genre_pairs:
+            con.executemany(
+                "INSERT OR REPLACE INTO tags_section (song_id, section_id, tag_type, tag, confidence) VALUES (?, 'S_global', 'genre', ?, ?)",
+                [(song_id, g, c) for g, c in genre_pairs],
+            )
 
 # ---------- Public entry ----------
 
-def run(song_id: str, midi_path: str, con: duckdb.DuckDBPyConnection, wav_out: Optional[str] = None, cfg: AudioConfig = AudioConfig()):
+def run(song_id: str, midi_path: Optional[str], con: duckdb.DuckDBPyConnection, wav_out: Optional[str] = None, audio_in: Optional[str] = None, cfg: AudioConfig = AudioConfig()):
     # 1) Ensure symbolic family counts exist (ENTRY_/EXIT_ events depend on them)
     _ensure_symbolic_family_counts(con, song_id)
 
-    # 2) Render (optional) and compute audio features
-    if wav_out is None:
-        os.makedirs("cache", exist_ok=True)
-        wav_out = os.path.join("cache", f"{song_id}.wav")
-    render_midi_to_wav(midi_path, wav_out, cfg)
-    _audio_features_to_db(con, song_id, wav_out, cfg)
+    # 2) Determine WAV source: provided audio or render from MIDI
+    if audio_in is not None and os.path.exists(audio_in):
+        wav_path = audio_in
+    else:
+        if wav_out is None:
+            os.makedirs("cache", exist_ok=True)
+            wav_out = os.path.join("cache", f"{song_id}.wav")
+        if midi_path is None:
+            raise ValueError("midi_path is required when audio_in is not provided")
+        render_midi_to_wav(midi_path, wav_out, cfg)
+        wav_path = wav_out
 
-    # 3) Repeat score from chroma
+    # 3) Ensure bars exist (from symbolic; if missing, approximate from audio)
+    _ensure_bars_from_audio_if_missing(con, song_id, wav_path, cfg)
+
+    # 4) Compute audio features
+    _audio_features_to_db(con, song_id, wav_path, cfg)
+
+    # 5) Repeat score from chroma
     _repeat_score_from_chroma(con, song_id)
 
-    # 4) Events
-    _emit_events(con, song_id, cfg)
+    # 6) Events (best-effort)
+    try:
+        _emit_events(con, song_id, cfg)
+    except Exception:
+        pass
 
-    # 5) Tags (stub)
+    # 7) Tags (stub)
     _predict_tags(con, song_id)
