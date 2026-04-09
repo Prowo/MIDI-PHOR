@@ -65,7 +65,8 @@ The Gradio UI includes **Bring your own LLM**: copy the generated **caption prom
 | `USE_LLM` | `true` / `false` for Gradio checkbox default |
 | `GRADIO_SERVER_NAME` | e.g. `0.0.0.0` in Docker |
 | `GRADIO_SERVER_PORT` | e.g. `7860` on Hugging Face Spaces |
-| `OPENAI_MAX_CALLS` | Optional cap on successful LLM API calls (public demos) |
+| `OPENAI_MAX_CALLS` | Lifetime cap on successful LLM calls (Docker default: `5`) |
+| `OPENAI_MAX_CALLS_PER_HOUR` | Optional rolling-window cap (OR with lifetime; see `OPENAI_QUOTA_WINDOW_SEC`) |
 | `LLM_QUOTA_PATH` | Optional file path for persisting the LLM call counter |
 
 ## Deploy (Hugging Face Spaces)

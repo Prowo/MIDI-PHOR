@@ -76,7 +76,8 @@ If you use `hf_push_space.py`, never paste API tokens into chat — use `HF_TOKE
 4. **Adding a key on Hugging Face:** Open your **Space** → **Settings** → **Variables and secrets**:
    - **`OPENAI_API_KEY`** — add as a **Secret** (Private). Rebuild/restart the Space if needed. The **Use LLM for caption** checkbox then appears.
    - **`OPENAI_MODEL`** — optional **Variable** (plain). Defaults to **`gpt-4o-mini`** (small, low-cost). Set to any chat model your key can use, e.g. another mini/nano tier if available.
-   - **`OPENAI_MAX_CALLS`** — optional *Variable*, e.g. `25`, to cap **successful** API completions **for the whole Space** (shared counter on that instance). When the cap is hit, the app falls back to the template caption.
+   - **`OPENAI_MAX_CALLS`** — optional *Variable* (integer). **Dockerfile default is `5`** (lifetime successful completions for that Space instance). When exhausted, the app falls back to the template caption.
+   - **`OPENAI_MAX_CALLS_PER_HOUR`** — optional *Variable* (integer). Second limit: max successful calls in a **rolling window** (default **3600 seconds**). If **both** this and `OPENAI_MAX_CALLS` are set, **either** limit can block the next call (whichever runs out first). Override window length with **`OPENAI_QUOTA_WINDOW_SEC`** (seconds).
    - **`USE_LLM`** — optional, `false` so the checkbox defaults off (visitors opt in); use `true` if you want LLM on by default when a key exists.
    - **`LLM_QUOTA_PATH`** — optional absolute path if you mount persistent storage and want the counter to survive restarts (otherwise it lives under `CACHE_DIR`, usually `cache/.openai_llm_calls`).
 

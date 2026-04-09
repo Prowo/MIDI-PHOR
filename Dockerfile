@@ -26,5 +26,7 @@ ENV GRADIO_SERVER_NAME="0.0.0.0"
 ENV GRADIO_SERVER_PORT="7860"
 ENV SF2_PATH="/usr/share/sounds/sf2/FluidR3_GM.sf2"
 ENV CACHE_DIR="cache"
+# Public demo: cap LLM cost (override in Space settings). Optional second cap: OPENAI_MAX_CALLS_PER_HOUR
+ENV OPENAI_MAX_CALLS="5"
 
 CMD ["python", "app.py"]

@@ -19,7 +19,7 @@ So: **nobody can “use your key”** if you never add one.
 - The key exists **only inside the container** as an environment variable.
 - It is **not** sent to the browser and **not** shown in the UI.
 - It **is** used when a visitor checks **“Use LLM for caption”** and runs the pipeline—each such run triggers a **server-side** request to OpenAI **using your billing**.
-- To limit cost, use `OPENAI_MAX_CALLS` (and optionally `LLM_QUOTA_PATH` on persistent storage). See [DEMO.md](DEMO.md).
+- To limit cost, use `OPENAI_MAX_CALLS` (Docker default **5**), optionally plus `OPENAI_MAX_CALLS_PER_HOUR` for a rolling-window cap—**either** limit can block the next call. See [DEMO.md](DEMO.md).
 
 ## “Bring your own LLM” (no shared key)
 

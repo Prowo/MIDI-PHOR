@@ -7,6 +7,7 @@ Shows each pipeline step and displays extracted data tables.
 from __future__ import annotations
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Tuple
@@ -38,6 +39,9 @@ CACHE_DIR = os.environ.get("CACHE_DIR", "cache")
 
 _OPENAI_KEY = bool(os.environ.get("OPENAI_API_KEY", "").strip())
 _OPENAI_MAX = os.environ.get("OPENAI_MAX_CALLS", "").strip()
+# Optional second cap: max successful LLM calls in a rolling window (OR with lifetime cap).
+_OPENAI_MAX_HOUR = os.environ.get("OPENAI_MAX_CALLS_PER_HOUR", "").strip()
+_OPENAI_HOUR_WINDOW_SEC = int(os.environ.get("OPENAI_QUOTA_WINDOW_SEC", "3600") or 3600)
 # Small / cheap chat model for captions (override on HF or locally). See assemble/llm_prompt.py.
 _OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
 
@@ -49,6 +53,15 @@ def _llm_quota_path() -> Path:
     return Path(CACHE_DIR) / ".openai_llm_calls"
 
 
+def _llm_hourly_path() -> Path:
+    """Timestamps of successful LLM calls for rolling-window cap."""
+    base = Path(CACHE_DIR)
+    custom = os.environ.get("LLM_QUOTA_PATH")
+    if custom:
+        return Path(custom).parent / ".openai_llm_hourly_ts.json"
+    return base / ".openai_llm_hourly_ts.json"
+
+
 def _read_llm_use_count() -> int:
     p = _llm_quota_path()
     try:
@@ -57,40 +70,89 @@ def _read_llm_use_count() -> int:
         return 0
 
 
+def _read_hourly_timestamps() -> list[float]:
+    p = _llm_hourly_path()
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            return [float(x) for x in raw if isinstance(x, (int, float))]
+    except Exception:
+        pass
+    return []
+
+
+def _prune_hourly_timestamps(now: float | None = None) -> list[float]:
+    now = now if now is not None else time.time()
+    cutoff = now - max(60, _OPENAI_HOUR_WINDOW_SEC)
+    return [t for t in _read_hourly_timestamps() if t >= cutoff]
+
+
+def _hourly_use_count() -> int:
+    if not _OPENAI_MAX_HOUR:
+        return 0
+    return len(_prune_hourly_timestamps())
+
+
 def _commit_llm_success() -> None:
-    """Increment counter after a successful OpenAI caption call."""
-    if not _OPENAI_MAX:
+    """Persist quota after a successful OpenAI caption call."""
+    if not _OPENAI_MAX and not _OPENAI_MAX_HOUR:
         return
-    p = _llm_quota_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    n = _read_llm_use_count() + 1
-    p.write_text(str(n), encoding="utf-8")
+    now = time.time()
+    if _OPENAI_MAX:
+        p = _llm_quota_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        n = _read_llm_use_count() + 1
+        p.write_text(str(n), encoding="utf-8")
+    if _OPENAI_MAX_HOUR:
+        hp = _llm_hourly_path()
+        hp.parent.mkdir(parents=True, exist_ok=True)
+        kept = _prune_hourly_timestamps(now)
+        kept.append(now)
+        hp.write_text(json.dumps(kept), encoding="utf-8")
 
 
 def llm_calls_remaining() -> int | None:
-    """None if unlimited; else remaining quota."""
-    if not _OPENAI_MAX:
+    """None if unlimited on both axes; else min(lifetime left, hourly left) when both set."""
+    life = None
+    hour = None
+    if _OPENAI_MAX:
+        life = max(0, int(_OPENAI_MAX) - _read_llm_use_count())
+    if _OPENAI_MAX_HOUR:
+        hour = max(0, int(_OPENAI_MAX_HOUR) - _hourly_use_count())
+    if life is None and hour is None:
         return None
-    limit = int(_OPENAI_MAX)
-    return max(0, limit - _read_llm_use_count())
+    if life is None:
+        return hour
+    if hour is None:
+        return life
+    return min(life, hour)
 
 
 def llm_quota_allows() -> tuple[bool, str]:
-    """Whether another LLM call is allowed under OPENAI_MAX_CALLS."""
-    if not _OPENAI_MAX:
+    """
+    Allow next LLM call only if every configured cap has room (lifetime AND rolling window).
+    Either cap can block (OR-style exhaustion from the visitor's perspective).
+    """
+    if not _OPENAI_MAX and not _OPENAI_MAX_HOUR:
         return True, ""
-    if _read_llm_use_count() >= int(_OPENAI_MAX):
+    if _OPENAI_MAX and _read_llm_use_count() >= int(_OPENAI_MAX):
         return (
             False,
-            "LLM quota for this public demo is used up. Captions still work via the **template**.",
+            "Lifetime LLM quota is used up (`OPENAI_MAX_CALLS`). Captions still work via the **template**.",
+        )
+    if _OPENAI_MAX_HOUR and _hourly_use_count() >= int(_OPENAI_MAX_HOUR):
+        return (
+            False,
+            f"Hourly LLM quota is used up (`OPENAI_MAX_CALLS_PER_HOUR`, rolling {_OPENAI_HOUR_WINDOW_SEC}s). "
+            "Try again later or use the **template** caption.",
         )
     return True, ""
 
 
-# Default LLM checkbox: off if no key; off if capped demo unless USE_LLM=true; else env
+# Default LLM checkbox: off if no key; off if any cap unless USE_LLM=true; else env
 if not _OPENAI_KEY:
     _DEFAULT_USE_LLM = False
-elif _OPENAI_MAX:
+elif _OPENAI_MAX or _OPENAI_MAX_HOUR:
     _DEFAULT_USE_LLM = os.environ.get("USE_LLM", "false").lower() == "true"
 else:
     _DEFAULT_USE_LLM = os.environ.get("USE_LLM", "true").lower() == "true"
@@ -791,10 +853,20 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
             "Symbolic extraction, tables, audio preview, and **JSON/text exports** (copy or download) still run. "
             "Open **Exports** below to copy the prompt and feature JSON into ChatGPT / Claude / a local model—**your keys stay on your machine**.*"
         )
-    elif _OPENAI_MAX:
+    elif _OPENAI_MAX or _OPENAI_MAX_HOUR:
+        cap_bits: list[str] = []
+        if _OPENAI_MAX:
+            cap_bits.append(
+                f"**{int(_OPENAI_MAX)}** lifetime successful calls (`OPENAI_MAX_CALLS`)"
+            )
+        if _OPENAI_MAX_HOUR:
+            cap_bits.append(
+                f"**{int(_OPENAI_MAX_HOUR)}** per rolling **{_OPENAI_HOUR_WINDOW_SEC}s** (`OPENAI_MAX_CALLS_PER_HOUR`)"
+            )
         gr.Markdown(
-            f"*Optional LLM captions use a server-side key and are limited to **{int(_OPENAI_MAX)}** successful API calls "
-            f"total (`OPENAI_MAX_CALLS`). Remaining count is shown after each run; template captions are always available.*"
+            "*Optional LLM captions use a server-side key. **Either** limit can block the next call: "
+            + " · ".join(cap_bits)
+            + ". Remaining count is shown after each run; template captions are always available.*"
         )
 
     if _OPENAI_KEY:
@@ -820,10 +892,15 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
     status_display = gr.Markdown("Upload a MIDI file, then click **Run Pipeline** (or use **Examples**).")
     
     _llm_info = None
-    if _OPENAI_KEY and _OPENAI_MAX:
+    if _OPENAI_KEY and (_OPENAI_MAX or _OPENAI_MAX_HOUR):
+        parts = [f"Model `{_OPENAI_MODEL}`"]
+        if _OPENAI_MAX:
+            parts.append(f"lifetime cap {int(_OPENAI_MAX)}")
+        if _OPENAI_MAX_HOUR:
+            parts.append(f"{int(_OPENAI_MAX_HOUR)}/{_OPENAI_HOUR_WINDOW_SEC}s rolling cap")
         _llm_info = (
-            f"Model `{_OPENAI_MODEL}`; capped at {int(_OPENAI_MAX)} successful calls (shared). "
-            "Template when off or when quota is exhausted. Exports shows the default prompt."
+            "; ".join(parts)
+            + ". Template when off or when either quota is exhausted. Exports shows the prompt sent."
         )
     elif _OPENAI_KEY:
         _llm_info = (
