@@ -41,12 +41,19 @@ Return only the caption text ({'short' if style=='short' else 'medium'} length).
 """)
 
 
-def generate_caption_openai(con: duckdb.DuckDBPyConnection, song_id: str, section_id: Optional[str] = None, style: str = "short") -> str:
+def generate_caption_openai(
+    con: duckdb.DuckDBPyConnection,
+    song_id: str,
+    section_id: Optional[str] = None,
+    style: str = "short",
+    user_message: Optional[str] = None,
+) -> str:
     """
-    Build a prompt from DB features and request a caption from OpenAI.
+    Request a caption from OpenAI using either a caller-supplied user_message or
+    build_caption_prompt(...) when user_message is None.
     Requires OPENAI_API_KEY. Model id from OPENAI_MODEL (default gpt-4o-mini).
     """
-    prompt = build_caption_prompt(con, song_id, section_id, style)
+    prompt = user_message if user_message is not None else build_caption_prompt(con, song_id, section_id, style)
 
     # Lazy import to avoid hard dependency if not used
     try:

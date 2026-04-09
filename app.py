@@ -463,7 +463,13 @@ def _write_demo_exports(
 
 # ---------- Core Pipeline with Progress ----------
 
-def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
+def process_midi(
+    midi_file: str,
+    use_llm: bool = True,
+    *,
+    prompt_replace: bool = False,
+    prompt_addon: str = "",
+) -> Tuple:
     """
     Process a MIDI file through the MIDIPHOR pipeline.
 
@@ -570,12 +576,24 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
         }
         tables["feature_slots"] = pd.DataFrame(slots_data)
 
-        # Export pack for "bring your own LLM" (no server API key required to use this text)
-        prompt_export = modules["build_caption_prompt"](con, song_id, section_id=None, style="medium")
+        # Base MIDI-derived prompt (always built for exports / BYOLLM)
+        base_prompt = modules["build_caption_prompt"](con, song_id, section_id=None, style="medium")
         slots_json = _slots_to_json(slots)
 
         fig_dir = os.path.join(CACHE_DIR, song_id, "figs")
         orch_json, p_chords, p_roll, p_graph = _build_graph_json_and_figures(con, song_id, fig_dir)
+
+        addon = (prompt_addon or "").strip()
+        if prompt_replace and addon:
+            llm_user_message = addon
+        elif addon:
+            llm_user_message = (
+                base_prompt
+                + "\n\n---\nAdditional instructions (from the demo UI):\n"
+                + addon
+            )
+        else:
+            llm_user_message = base_prompt
 
         # Step 5: Generate caption
         quota_note = ""
@@ -586,17 +604,25 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
                 quota_note = quota_msg
         if use_llm and _OPENAI_KEY:
             try:
-                caption = modules["generate_caption_openai"](con, song_id, section_id=None, style="medium")
+                caption = modules["generate_caption_openai"](
+                    con,
+                    song_id,
+                    section_id=None,
+                    style="medium",
+                    user_message=llm_user_message,
+                )
                 _commit_llm_success()
             except Exception as e:
                 caption = modules["caption_for_song"](con, song_id)
                 caption += f"\n\n(LLM error: {e})"
+            prompt_export = llm_user_message
         else:
             caption = modules["caption_for_song"](con, song_id)
             if quota_note:
                 caption += f"\n\n{quota_note}"
             elif use_llm and not _OPENAI_KEY:
                 caption += "\n\n(This deployment has no LLM API key; using template caption.)"
+            prompt_export = base_prompt
         
         step_status["caption"] = "completed"
 
@@ -666,7 +692,12 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
 
 # ---------- Gradio Interface ----------
 
-def run_pipeline(midi_file, use_llm_checkbox: bool):
+def run_pipeline(
+    midi_file,
+    use_llm_checkbox: bool,
+    prompt_replace_checkbox: bool,
+    prompt_addon_text: str,
+):
     """Main Gradio handler."""
     empty_tables = [_df_for_gradio(None)] * 11
     if midi_file is None:
@@ -701,7 +732,12 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
         p_roll,
         p_graph,
         export_paths,
-    ) = process_midi(midi_file, use_llm=use_llm)
+    ) = process_midi(
+        midi_file,
+        use_llm=use_llm,
+        prompt_replace=bool(prompt_replace_checkbox),
+        prompt_addon=str(prompt_addon_text or ""),
+    )
 
     graph_json_text = json.dumps(graph_json, indent=2, ensure_ascii=False)
     cap = "" if caption is None else str(caption)
@@ -809,6 +845,24 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
                 interactive=_OPENAI_KEY,
                 info=_llm_info,
             )
+            prompt_replace = gr.Checkbox(
+                label="Replace default prompt (use only the text box below as the user message)",
+                value=False,
+                visible=_OPENAI_KEY,
+                interactive=_OPENAI_KEY,
+            )
+            prompt_addon = gr.Textbox(
+                label="Prompt customization",
+                placeholder=(
+                    "Leave empty for the automatic MIDI-based prompt. "
+                    "Or add instructions (appended after it). "
+                    "Or turn on “Replace” and paste a full custom user message."
+                ),
+                lines=6,
+                max_lines=16,
+                visible=_OPENAI_KEY,
+                interactive=_OPENAI_KEY,
+            )
             submit_btn = gr.Button("🚀 Run Pipeline", variant="primary", size="lg")
         
         with gr.Column(scale=1):
@@ -832,14 +886,14 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
         open=bool(_OPENAI_KEY),
     ):
         gr.Markdown(
-            "**First block = default caption prompt** — the same user message sent to the OpenAI API when *Use LLM for caption* is on "
-            f"(model **`{_OPENAI_MODEL}`**). Copy it to reuse elsewhere or verify what the server sends. "
+            "**First block** — user message sent to the API when *Use LLM* is on (default MIDI prompt, or your **customization** above); "
+            f"with LLM off it shows the automatic prompt only. Model **`{_OPENAI_MODEL}`**. "
             "Other **Code** blocks and **Download** include feature JSON, ScoreSpec-style files, and `midiphor_export.json`. "
             "ScoreSpec-family files are **derived** in `assemble/paper_exports.py`. "
             "Nothing is sent to OpenAI unless the LLM checkbox is enabled for that run."
         )
         export_prompt = gr.Code(
-            label="Default LLM user prompt (same as API request; also caption_prompt.txt in downloads)",
+            label="User message for the LLM (API request body; caption_prompt.txt when LLM ran)",
             language="markdown",
             lines=14,
             max_lines=28,
@@ -960,16 +1014,16 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
     if EXAMPLE_MIDI.is_file():
         gr.Markdown("**Try the bundled example:**")
         gr.Examples(
-            examples=[[str(EXAMPLE_MIDI), False]],
-            inputs=[midi_input, use_llm],
+            examples=[[str(EXAMPLE_MIDI), False, False, ""]],
+            inputs=[midi_input, use_llm, prompt_replace, prompt_addon],
             outputs=outputs,
             fn=run_pipeline,
             cache_examples=False,
         )
-    
+
     submit_btn.click(
         fn=run_pipeline,
-        inputs=[midi_input, use_llm],
+        inputs=[midi_input, use_llm, prompt_replace, prompt_addon],
         outputs=outputs,
     )
     

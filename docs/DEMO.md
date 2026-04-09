@@ -83,6 +83,10 @@ If you use `hf_push_space.py`, never paste API tokens into chat — use `HF_TOKE
    **Default prompt:** After a run, the UI **Exports** section (open by default when a key is set) shows the exact user prompt sent to the model; it matches `caption_prompt.txt` in the download bundle.
 5. **Local / Docker:** The same variables work as environment variables (`docker run -e OPENAI_API_KEY=... -e OPENAI_MAX_CALLS=20 ...`).
 
+6. **Where do I set the key — PC, Docker, or both?** Only **where the app actually runs**. If visitors use your **Hugging Face Space**, set **`OPENAI_API_KEY`** (and optional **`OPENAI_MODEL`**) in the **Space** settings — not on your laptop. If you run **`docker run`** or **`python app.py`** on your machine, set the env vars **there** (shell or `.env` loaded by your process). You do **not** need the same secret in both places unless you operate **two** deployments.
+
+7. **Customizing the prompt in the UI:** When the Space has a key, the demo includes **Prompt customization** (append text after the automatic MIDI prompt) and **Replace default prompt** (send only your text). **Exports** shows the exact user message that was sent when *Use LLM* was enabled.
+
 ## Embedding the Space elsewhere
 
 - **iframe:** point `src` at your Space URL (e.g. `https://YOURNAME-midiphor.hf.space`).
