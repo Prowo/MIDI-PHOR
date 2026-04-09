@@ -73,11 +73,14 @@ If you use `hf_push_space.py`, never paste API tokens into chat — use `HF_TOKE
 1. Create a **Docker** Space and push this repository.
 2. The `Dockerfile` installs FluidSynth and the Debian `fluid-soundfont-gm` package, and sets `SF2_PATH` for the container.
 3. **OpenAI (optional):** You do **not** need to set `OPENAI_API_KEY`. Without it, the Space runs in **template-only** caption mode and the LLM checkbox is hidden.
-4. **Adding a key on Hugging Face:** In the Space → **Settings** → **Variables and secrets** (or **Repository secrets** on HF, depending on UI), add:
-   - **`OPENAI_API_KEY`** — repository *Secret* (never commit it). After a rebuild, the **Use LLM for caption** checkbox appears.
+4. **Adding a key on Hugging Face:** Open your **Space** → **Settings** → **Variables and secrets**:
+   - **`OPENAI_API_KEY`** — add as a **Secret** (Private). Rebuild/restart the Space if needed. The **Use LLM for caption** checkbox then appears.
+   - **`OPENAI_MODEL`** — optional **Variable** (plain). Defaults to **`gpt-4o-mini`** (small, low-cost). Set to any chat model your key can use, e.g. another mini/nano tier if available.
    - **`OPENAI_MAX_CALLS`** — optional *Variable*, e.g. `25`, to cap **successful** API completions **for the whole Space** (shared counter on that instance). When the cap is hit, the app falls back to the template caption.
    - **`USE_LLM`** — optional, `false` so the checkbox defaults off (visitors opt in); use `true` if you want LLM on by default when a key exists.
    - **`LLM_QUOTA_PATH`** — optional absolute path if you mount persistent storage and want the counter to survive restarts (otherwise it lives under `CACHE_DIR`, usually `cache/.openai_llm_calls`).
+
+   **Default prompt:** After a run, the UI **Exports** section (open by default when a key is set) shows the exact user prompt sent to the model; it matches `caption_prompt.txt` in the download bundle.
 5. **Local / Docker:** The same variables work as environment variables (`docker run -e OPENAI_API_KEY=... -e OPENAI_MAX_CALLS=20 ...`).
 
 ## Embedding the Space elsewhere

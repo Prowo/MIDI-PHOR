@@ -38,6 +38,8 @@ CACHE_DIR = os.environ.get("CACHE_DIR", "cache")
 
 _OPENAI_KEY = bool(os.environ.get("OPENAI_API_KEY", "").strip())
 _OPENAI_MAX = os.environ.get("OPENAI_MAX_CALLS", "").strip()
+# Small / cheap chat model for captions (override on HF or locally). See assemble/llm_prompt.py.
+_OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
 
 
 def _llm_quota_path() -> Path:
@@ -759,6 +761,14 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
             f"total (`OPENAI_MAX_CALLS`). Remaining count is shown after each run; template captions are always available.*"
         )
 
+    if _OPENAI_KEY:
+        gr.Markdown(
+            f"*Server LLM is enabled. Model: **`{_OPENAI_MODEL}`** (set env **`OPENAI_MODEL`** to change; default is a small, low-cost model). "
+            "On **Hugging Face Spaces**: **Settings → Variables and secrets** → add secret **`OPENAI_API_KEY`**, and optionally variable **`OPENAI_MODEL`** (e.g. `gpt-4o-mini`). "
+            "Locally or in Docker: `export OPENAI_API_KEY=...` and optionally `export OPENAI_MODEL=gpt-4o-mini`. "
+            "After each run, the **exact default user prompt** sent to the model is in **Exports** below (first code block), same as `caption_prompt.txt` in the download bundle.*"
+        )
+
     if EXAMPLE_MIDI.is_file():
         gr.Markdown(
             f"*Quick try: use the **Examples** section at the bottom with `{EXAMPLE_MIDI.name}`, or upload any `.mid` file.*"
@@ -776,11 +786,14 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
     _llm_info = None
     if _OPENAI_KEY and _OPENAI_MAX:
         _llm_info = (
-            f"Uses server key; capped at {int(_OPENAI_MAX)} successful calls (shared). "
-            "Template is used when off or when quota is exhausted."
+            f"Model `{_OPENAI_MODEL}`; capped at {int(_OPENAI_MAX)} successful calls (shared). "
+            "Template when off or when quota is exhausted. Exports shows the default prompt."
         )
     elif _OPENAI_KEY:
-        _llm_info = "Uses the server's API key. Turn off for template-only captions."
+        _llm_info = (
+            f"Model `{_OPENAI_MODEL}`. Turn off for template-only captions. "
+            "Exports shows the default user prompt (same as the API request)."
+        )
 
     with gr.Row():
         with gr.Column(scale=1):
@@ -814,16 +827,19 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
         placeholder="Run the pipeline to generate a template or LLM caption.",
     )
 
-    with gr.Accordion("📋 Exports — copy, download, or bring your own LLM", open=False):
+    with gr.Accordion(
+        "📋 Exports — default LLM prompt, JSON, downloads",
+        open=bool(_OPENAI_KEY),
+    ):
         gr.Markdown(
-            "Use **Code** blocks to select all and copy. **Download** is one multi-file control: it includes "
-            "`scorespec.json`, `scorespec_lite.json`, `enhanced_facts.txt`, `hierarchical_facts.json`, "
-            "`feature_slots.json`, `orchestration_graph.json`, `caption.txt`, `caption_prompt.txt`, and "
-            "`midiphor_export.json`. ScoreSpec-family files are **derived** in `assemble/paper_exports.py`. "
-            "Nothing here is sent to OpenAI unless you enabled the server-side LLM checkbox above."
+            "**First block = default caption prompt** — the same user message sent to the OpenAI API when *Use LLM for caption* is on "
+            f"(model **`{_OPENAI_MODEL}`**). Copy it to reuse elsewhere or verify what the server sends. "
+            "Other **Code** blocks and **Download** include feature JSON, ScoreSpec-style files, and `midiphor_export.json`. "
+            "ScoreSpec-family files are **derived** in `assemble/paper_exports.py`. "
+            "Nothing is sent to OpenAI unless the LLM checkbox is enabled for that run."
         )
         export_prompt = gr.Code(
-            label="caption_prompt.txt — copy for ChatGPT / Claude / local LLM",
+            label="Default LLM user prompt (same as API request; also caption_prompt.txt in downloads)",
             language="markdown",
             lines=14,
             max_lines=28,

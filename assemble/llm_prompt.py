@@ -43,8 +43,8 @@ Return only the caption text ({'short' if style=='short' else 'medium'} length).
 
 def generate_caption_openai(con: duckdb.DuckDBPyConnection, song_id: str, section_id: Optional[str] = None, style: str = "short") -> str:
     """
-    Build a prompt from DB features and request a caption from OpenAI GPT-4o-mini.
-    Requires environment variable OPENAI_API_KEY to be set.
+    Build a prompt from DB features and request a caption from OpenAI.
+    Requires OPENAI_API_KEY. Model id from OPENAI_MODEL (default gpt-4o-mini).
     """
     prompt = build_caption_prompt(con, song_id, section_id, style)
 
