@@ -93,7 +93,7 @@ elif _OPENAI_MAX:
 else:
     _DEFAULT_USE_LLM = os.environ.get("USE_LLM", "true").lower() == "true"
 
-EXAMPLE_MIDI = _ROOT / "examples" / "demo_abba.mid"
+EXAMPLE_MIDI = _ROOT / "examples" / "lmd_dancing_queen.mid"
 _EMPTY_GRAPH_JSON: dict[str, list] = {"nodes": [], "edges": []}
 
 
@@ -654,6 +654,11 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
         gr.Markdown(
             f"*Quick try: use the **Examples** section at the bottom with `{EXAMPLE_MIDI.name}`, or upload any `.mid` file.*"
         )
+        if EXAMPLE_MIDI.name == "lmd_dancing_queen.mid":
+            gr.Markdown(
+                "*Bundled example: **Lakh MIDI Dataset** (Clean MIDI subset), [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/). "
+                "Citation: [dataset page](https://colinraffel.com/projects/lmd/) and Colin Raffel, PhD thesis, 2016 — see `examples/README.md`.*"
+            )
     
     # Pipeline visualization
     pipeline_display = gr.HTML(create_pipeline_html(0, {}))
