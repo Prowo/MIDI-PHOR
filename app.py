@@ -161,6 +161,10 @@ EXAMPLE_MIDI = _ROOT / "examples" / "lmd_dancing_queen.mid"
 _EMPTY_GRAPH_JSON: dict[str, list] = {"nodes": [], "edges": []}
 
 
+def _empty_hierarchical_facts() -> dict[str, list]:
+    return {k: [] for k in ("structure", "harmony", "rhythm", "orchestration", "motifs", "form")}
+
+
 # ---------- Pipeline Step Definitions ----------
 PIPELINE_STEPS = [
     {"id": "upload", "name": "Upload", "icon": "📁", "desc": "MIDI file uploaded"},
@@ -335,6 +339,10 @@ def _df_for_gradio(df: pd.DataFrame | None) -> pd.DataFrame:
         if str(out[c].dtype) == "object":
             out[c] = out[c].apply(lambda x: "" if x is None else x)
     return out
+
+
+# Initial DataFrame for every table (avoids Gradio 6 default 1/2/3 grid before first run)
+_PLACEHOLDER_DF = _df_for_gradio(None)
 
 
 def _build_graph_json_and_figures(con, song_id: str, work_dir: str) -> tuple[dict, str | None, str | None, str | None]:
@@ -538,7 +546,8 @@ def process_midi(
     Returns:
         pipeline_html, status, tables, caption, audio_path,
         export_prompt, export_slots_json,
-        orchestration_graph_json, paths to three figure PNGs (or None),
+        orchestration_graph_json, hierarchical_facts (topic buckets),
+        paths to three figure PNGs (or None),
         list of written export file paths (JSON/txt) for download.
     """
     if not midi_file:
@@ -546,7 +555,11 @@ def process_midi(
             create_pipeline_html(0, {}),
             "⚠️ No file uploaded",
             {}, "", None, "", "",
-            _EMPTY_GRAPH_JSON, None, None, None,
+            _EMPTY_GRAPH_JSON,
+            _empty_hierarchical_facts(),
+            None,
+            None,
+            None,
             [],
         )
     
@@ -587,7 +600,11 @@ def process_midi(
                 create_pipeline_html(1, step_status),
                 f"❌ Symbolic extraction failed: {e}",
                 tables, "", None, "", "",
-                _EMPTY_GRAPH_JSON, None, None, None,
+                _EMPTY_GRAPH_JSON,
+                _empty_hierarchical_facts(),
+                None,
+                None,
+                None,
                 [],
             )
         
@@ -684,14 +701,25 @@ def process_midi(
                 caption += f"\n\n{quota_note}"
             elif use_llm and not _OPENAI_KEY:
                 caption += "\n\n(This deployment has no LLM API key; using template caption.)"
+            if not (use_llm and _OPENAI_KEY):
+                caption = (
+                    caption.rstrip()
+                    + " — Template caption from MIDI features (not an LLM-generated rewrite)."
+                )
             prompt_export = base_prompt
-        
+
         step_status["caption"] = "completed"
 
         try:
             paper_bundle = modules["build_paper_export_bundle"](con, song_id, orch_json)
         except Exception:
             paper_bundle = None
+
+        hierarchical_facts: dict[str, list] = (
+            paper_bundle["hierarchical_facts"]
+            if paper_bundle and isinstance(paper_bundle.get("hierarchical_facts"), dict)
+            else _empty_hierarchical_facts()
+        )
 
         export_dir = os.path.join(CACHE_DIR, song_id, "export")
         try:
@@ -706,14 +734,19 @@ def process_midi(
         except Exception:
             export_paths = []
 
-        # Step 6: Render audio
+        # Step 6: Render audio (FluidSynth + SF2 in Docker/HF; falls back to PrettyMIDI synth if no SF2)
         audio_path = os.path.join(CACHE_DIR, f"{song_id}.wav")
         sf2 = SF2_PATH if Path(SF2_PATH).is_file() else None
+        audio_status_extra = ""
         try:
-            modules['render'](midi_file, audio_path, sf2=sf2)
+            modules["render"](midi_file, audio_path, sf2=sf2)
+            if not (audio_path and os.path.isfile(audio_path)):
+                audio_path = None
+                audio_status_extra = " Audio preview: render produced no file."
         except Exception as e:
             audio_path = None
-        
+            audio_status_extra = f" Audio preview unavailable ({type(e).__name__})."
+
         con.close()
         
         # Clean up temp database
@@ -722,7 +755,7 @@ def process_midi(
         except Exception:
             pass
         
-        status_msg = "✅ Pipeline complete!"
+        status_msg = "✅ Pipeline complete!" + audio_status_extra
         rem = llm_calls_remaining()
         if _OPENAI_KEY and rem is not None:
             status_msg += f" (LLM calls remaining: {rem})"
@@ -736,6 +769,7 @@ def process_midi(
             prompt_export,
             slots_json,
             orch_json,
+            hierarchical_facts,
             p_chords,
             p_roll,
             p_graph,
@@ -747,7 +781,11 @@ def process_midi(
             create_pipeline_html(0, step_status),
             f"❌ Error: {str(e)}",
             tables, "", None, "", "",
-            _EMPTY_GRAPH_JSON, None, None, None,
+            _EMPTY_GRAPH_JSON,
+            _empty_hierarchical_facts(),
+            None,
+            None,
+            None,
             [],
         )
 
@@ -761,7 +799,7 @@ def run_pipeline(
     prompt_addon_text: str,
 ):
     """Main Gradio handler."""
-    empty_tables = [_df_for_gradio(None)] * 11
+    empty_tables = [_PLACEHOLDER_DF.copy() for _ in range(11)]
     if midi_file is None:
         empty_graph_txt = json.dumps(_EMPTY_GRAPH_JSON, indent=2, ensure_ascii=False)
         return (
@@ -774,7 +812,7 @@ def run_pipeline(
             "",
             empty_graph_txt,
             None,
-            _EMPTY_GRAPH_JSON,
+            _empty_hierarchical_facts(),
             None,
             None,
             None,
@@ -790,6 +828,7 @@ def run_pipeline(
         prompt_export,
         slots_json,
         graph_json,
+        hierarchical_facts,
         p_chords,
         p_roll,
         p_graph,
@@ -824,7 +863,7 @@ def run_pipeline(
         slots_json,
         graph_json_text,
         export_paths if export_paths else None,
-        graph_json,
+        hierarchical_facts,
         p_chords,
         p_roll,
         p_graph,
@@ -842,50 +881,36 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
     
     gr.Markdown("""
     # 🎹 MIDIPHOR: MIDI Caption Generator
-    
-    Upload a MIDI file to see the full analysis pipeline in action. Watch as each step extracts 
-    musical features and builds toward a natural language caption.
+
+    **[Paper (ACL)](https://aclanthology.org/2026.nlp4musa-1.6/)** · **[GitHub](https://github.com/Prowo/MIDI-PHOR)**
+
+    Upload a `.mid` file, click **Run Pipeline**, then use **Exports** for JSON, graphs, and (optionally) your own LLM.
     """)
 
     if not _OPENAI_KEY:
         gr.Markdown(
-            "*This deployment has **no OpenAI API key**: captions use the built-in **template** only. "
-            "Symbolic extraction, tables, audio preview, and **JSON/text exports** (copy or download) still run. "
-            "Open **Exports** below to copy the prompt and feature JSON into ChatGPT / Claude / a local model—**your keys stay on your machine**.*"
+            "*No server **OpenAI** key here — **template captions** only; tables, audio preview, and exports still run. "
+            "Copy the prompt from **Exports** to use your key locally.*"
         )
     elif _OPENAI_MAX or _OPENAI_MAX_HOUR:
         cap_bits: list[str] = []
         if _OPENAI_MAX:
             cap_bits.append(
-                f"**{int(_OPENAI_MAX)}** lifetime successful calls (`OPENAI_MAX_CALLS`)"
+                f"**{int(_OPENAI_MAX)}** lifetime calls (`OPENAI_MAX_CALLS`)"
             )
         if _OPENAI_MAX_HOUR:
             cap_bits.append(
-                f"**{int(_OPENAI_MAX_HOUR)}** per rolling **{_OPENAI_HOUR_WINDOW_SEC}s** (`OPENAI_MAX_CALLS_PER_HOUR`)"
+                f"**{int(_OPENAI_MAX_HOUR)}** / **{_OPENAI_HOUR_WINDOW_SEC}s** (`OPENAI_MAX_CALLS_PER_HOUR`)"
             )
         gr.Markdown(
-            "*Optional LLM captions use a server-side key. **Either** limit can block the next call: "
-            + " · ".join(cap_bits)
-            + ". Remaining count is shown after each run; template captions are always available.*"
+            "*LLM calls are capped: " + " · ".join(cap_bits) + ". Remaining count appears after each run.*"
         )
 
     if _OPENAI_KEY:
         gr.Markdown(
-            f"*Server LLM is enabled. Model: **`{_OPENAI_MODEL}`** (set env **`OPENAI_MODEL`** to change; default is a small, low-cost model). "
-            "On **Hugging Face Spaces**: **Settings → Variables and secrets** → add secret **`OPENAI_API_KEY`**, and optionally variable **`OPENAI_MODEL`** (e.g. `gpt-4o-mini`). "
-            "Locally or in Docker: `export OPENAI_API_KEY=...` and optionally `export OPENAI_MODEL=gpt-4o-mini`. "
-            "After each run, the **exact default user prompt** sent to the model is in **Exports** below (first code block), same as `caption_prompt.txt` in the download bundle.*"
+            f"*Optional LLM captions · model **`{_OPENAI_MODEL}`** (env `OPENAI_MODEL`). "
+            "The user message sent to the API is always in **Exports**.*"
         )
-
-    if EXAMPLE_MIDI.is_file():
-        gr.Markdown(
-            f"*Quick try: use the **Examples** section at the bottom with `{EXAMPLE_MIDI.name}`, or upload any `.mid` file.*"
-        )
-        if EXAMPLE_MIDI.name == "lmd_dancing_queen.mid":
-            gr.Markdown(
-                "*Bundled example: **Lakh MIDI Dataset** (Clean MIDI subset), [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/). "
-                "Citation: [dataset page](https://colinraffel.com/projects/lmd/) and Colin Raffel, PhD thesis, 2016 — see `examples/README.md`.*"
-            )
     
     # Pipeline visualization
     pipeline_display = gr.HTML(create_pipeline_html(0, {}))
@@ -1009,40 +1034,81 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
         with gr.Row():
             with gr.Column():
                 gr.Markdown("**Song Metadata**")
-                tbl_songs = gr.Dataframe(label="songs", interactive=False, wrap=True)
+                tbl_songs = gr.Dataframe(
+                    label="songs",
+                    interactive=False,
+                    wrap=True,
+                    value=_PLACEHOLDER_DF.copy(),
+                )
             with gr.Column():
                 gr.Markdown("**Key Detection**")
-                tbl_keys = gr.Dataframe(label="key_changes", interactive=False, wrap=True)
+                tbl_keys = gr.Dataframe(
+                    label="key_changes",
+                    interactive=False,
+                    wrap=True,
+                    value=_PLACEHOLDER_DF.copy(),
+                )
         with gr.Row():
             with gr.Column():
                 gr.Markdown("**Tracks (Instruments)**")
-                tbl_tracks = gr.Dataframe(label="tracks", interactive=False, wrap=True)
+                tbl_tracks = gr.Dataframe(
+                    label="tracks",
+                    interactive=False,
+                    wrap=True,
+                    value=_PLACEHOLDER_DF.copy(),
+                )
             with gr.Column():
                 gr.Markdown("**Bars (Time Grid)**")
-                tbl_bars = gr.Dataframe(label="bars", interactive=False, wrap=True)
+                tbl_bars = gr.Dataframe(
+                    label="bars",
+                    interactive=False,
+                    wrap=True,
+                    value=_PLACEHOLDER_DF.copy(),
+                )
         with gr.Row():
             with gr.Column():
                 gr.Markdown("**Notes (Sample)**")
-                tbl_notes = gr.Dataframe(label="notes", interactive=False, wrap=True)
+                tbl_notes = gr.Dataframe(
+                    label="notes",
+                    interactive=False,
+                    wrap=True,
+                    value=_PLACEHOLDER_DF.copy(),
+                )
             with gr.Column():
                 gr.Markdown("**Chords**")
-                tbl_chords = gr.Dataframe(label="chords", interactive=False, wrap=True)
+                tbl_chords = gr.Dataframe(
+                    label="chords",
+                    interactive=False,
+                    wrap=True,
+                    value=_PLACEHOLDER_DF.copy(),
+                )
     
     with gr.Accordion("📊 Step 2: Section Analysis", open=False):
         with gr.Row():
             with gr.Column():
                 gr.Markdown("**Sections**")
-                tbl_sections = gr.Dataframe(label="sections", interactive=False, wrap=True)
+                tbl_sections = gr.Dataframe(
+                    label="sections",
+                    interactive=False,
+                    wrap=True,
+                    value=_PLACEHOLDER_DF.copy(),
+                )
             with gr.Column():
                 gr.Markdown("**Bar Metrics**")
-                tbl_bar_metrics = gr.Dataframe(label="bar_metrics", interactive=False, wrap=True)
+                tbl_bar_metrics = gr.Dataframe(
+                    label="bar_metrics",
+                    interactive=False,
+                    wrap=True,
+                    value=_PLACEHOLDER_DF.copy(),
+                )
     
     with gr.Accordion("🔗 Step 3: Orchestration Graph", open=False):
         gr.Markdown(
-            "**JSON** is the same structure you can pass to downstream tools (`nodes` / `edges`). "
-            "**Figures** are quick matplotlib previews from this run."
+            "**Hierarchical facts** summarize structure, harmony, rhythm, orchestration, motifs, and form "
+            "(same buckets as in the paper export bundle). Full **orchestration graph JSON** is under **Exports** "
+            "(`orchestration_graph.json`). **Figures** below are matplotlib previews from this run."
         )
-        graph_json_out = gr.JSON(label="Orchestration graph (JSON)")
+        hierarchical_facts_out = gr.JSON(label="Hierarchical facts (structure → form)")
         with gr.Row():
             with gr.Column():
                 fig_chords = gr.Image(label="Chord / RN timeline", type="filepath", interactive=False)
@@ -1052,14 +1118,29 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
         with gr.Row():
             with gr.Column():
                 gr.Markdown("**Graph Nodes (Instruments)**")
-                tbl_graph_nodes = gr.Dataframe(label="graph_nodes", interactive=False, wrap=True)
+                tbl_graph_nodes = gr.Dataframe(
+                    label="graph_nodes",
+                    interactive=False,
+                    wrap=True,
+                    value=_PLACEHOLDER_DF.copy(),
+                )
             with gr.Column():
                 gr.Markdown("**Graph Edges (Relationships)**")
-                tbl_graph_edges = gr.Dataframe(label="graph_edges", interactive=False, wrap=True)
+                tbl_graph_edges = gr.Dataframe(
+                    label="graph_edges",
+                    interactive=False,
+                    wrap=True,
+                    value=_PLACEHOLDER_DF.copy(),
+                )
     
     with gr.Accordion("📋 Step 4: Feature Slots", open=False):
         gr.Markdown("**Aggregated features used for caption generation**")
-        tbl_slots = gr.Dataframe(label="feature_slots", interactive=False, wrap=True)
+        tbl_slots = gr.Dataframe(
+            label="feature_slots",
+            interactive=False,
+            wrap=True,
+            value=_PLACEHOLDER_DF.copy(),
+        )
     
     # Event handlers
     outputs = [
@@ -1082,14 +1163,21 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
         export_slots,
         export_graph_code,
         export_files,
-        graph_json_out,
+        hierarchical_facts_out,
         fig_chords,
         fig_roll,
         fig_graph,
     ]
 
     if EXAMPLE_MIDI.is_file():
-        gr.Markdown("**Try the bundled example:**")
+        gr.Markdown(
+            f"**Try the bundled example** (`{EXAMPLE_MIDI.name}`) or upload any MIDI."
+        )
+        if EXAMPLE_MIDI.name == "lmd_dancing_queen.mid":
+            gr.Markdown(
+                "*Example from **Lakh MIDI Dataset** (Clean MIDI subset), [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/) — "
+                "[dataset](https://colinraffel.com/projects/lmd/) · see `examples/README.md`.*"
+            )
         gr.Examples(
             examples=[[str(EXAMPLE_MIDI), False, False, ""]],
             inputs=[midi_input, use_llm, prompt_replace, prompt_addon],
@@ -1106,15 +1194,11 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
     
     gr.Markdown("""
     ---
-    ### How It Works
-    
-    1. **Symbolic Extraction** — Parses MIDI for notes, tracks, tempo, key, and chord progressions
-    2. **Section Analysis** — Identifies musical sections (intro, verse, chorus) using novelty detection
-    3. **Orchestration Graph** — Maps relationships between instruments (supports, doubles, rhythmic lock)
-    4. **Feature Aggregation** — Combines all features into a structured "slots" representation
-    5. **Caption Generation** — Uses templates or LLM to produce natural language description
-    
-    [GitHub](https://github.com/Prowo/MIDI-PHOR) | [Paper (ACL)](https://aclanthology.org/2026.nlp4musa-1.6/)
+    ### How it works
+
+    Symbolic extraction → sections → orchestration graph → feature slots → template or LLM caption.
+
+    [Paper (ACL)](https://aclanthology.org/2026.nlp4musa-1.6/) · [GitHub](https://github.com/Prowo/MIDI-PHOR) · [Buy me a coffee](https://buymeacoffee.com/prowo)
     """)
 
 

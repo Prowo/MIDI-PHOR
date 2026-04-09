@@ -143,13 +143,27 @@ def slots_for_section(con: duckdb.DuckDBPyConnection, song_id: str, section_id: 
 
 # ---------- Caption templates ----------
 
+
+def _progression_blurb(slots: Dict[str, Any]) -> str:
+    """Short progression line for templates — avoid dumping long figured-bass strings."""
+    prog = (slots.get("progression") or "").strip()
+    roman = (slots.get("roman") or "").strip()
+    if not prog and not roman:
+        return "simple harmonic motion"
+    if len(prog) <= 96:
+        return prog
+    if roman and len(roman) <= 120:
+        return f"{roman} (full chord symbols omitted for brevity)"
+    return prog[:90].rstrip() + "…"
+
+
 def caption_short(slots: Dict[str, Any]) -> str:
     bits = []
     if slots.get("tempo_bpm"): bits.append(f"~{int(slots['tempo_bpm'])} BPM")
     if slots.get("meter"): bits.append(slots["meter"])
     head = ", ".join(bits) if bits else ""
     key = slots.get("key") or "unknown key"
-    prog = slots.get("progression") or "simple diatonic moves"
+    prog = _progression_blurb(slots)
     s1 = f"{head} piece in {key} built around {prog}."
 
     s2_parts = []
@@ -175,7 +189,7 @@ def caption_medium(slots: Dict[str, Any]) -> str:
     key = slots.get("key") or "unknown key"
     s = [f"{intro} In {key}."]
 
-    prog = slots.get("progression") or "simple diatonic moves"
+    prog = _progression_blurb(slots)
     rhythm = slots.get("rhythm_trait")
     texture = slots.get("texture_blurb")
     mood = None
