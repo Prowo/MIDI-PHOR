@@ -48,7 +48,7 @@ This creates the Docker Space (if missing) and uploads the project. If `create_r
 Hugging Face **does not** show a one-click “connect this Space to GitHub” control in Settings. The Hub repo for a Space **is** a Git repo (`https://huggingface.co/spaces/<user>/<name>`), but linking it to GitHub is done by **you**, not by a Settings toggle.
 
 **Option A — GitHub Action (recommended)**  
-This repo includes `.github/workflows/sync-to-hf-space.yml` (at repository root). On every push to **`main`**, it mirrors the GitHub tree to your Space (same files as Git — respects `.gitignore`).
+This repo includes `.github/workflows/sync-to-hf-space.yml` (at repository root). On every push to **`main`**, it mirrors the GitHub tree to your Space using the **`hf` CLI** (Python), with **`actions/checkout@v6`** / **`setup-python@v6`** on Node 24–compatible action runtimes (avoids deprecated Node 20 chains from older composite actions).
 
 1. On **GitHub** (`Prowo/MIDI-PHOR`): **Settings → Secrets and variables → Actions** → New repository secret **`HF_TOKEN`** (HF access token with **write** access to `StevenAu/MIDI-PHOR`).
 2. If your Space path is not `StevenAu/MIDI-PHOR`, edit `huggingface_repo_id` in that workflow file.

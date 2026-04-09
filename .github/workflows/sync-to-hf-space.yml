@@ -1,10 +1,13 @@
 # Sync GitHub → Hugging Face Space (Docker).
 # HF does not offer "link repo" in Space Settings; use this or manual `git push` (see docs/DEMO.md).
 #
+# Uses actions/checkout@v6 (Node 24) and the Hugging Face Python CLI instead of
+# huggingface/hub-sync (which pins astral-sh/setup-uv@v5 on Node 20 — deprecated on runners).
+#
 # Setup:
 # 1. GitHub repo → Settings → Secrets and variables → Actions → New secret `HF_TOKEN`
 #    (HF token with write access to the Space)
-# 2. If your Space name or HF username differs, edit huggingface_repo_id below.
+# 2. If your Space name or HF username differs, edit HF_REPO_ID below.
 
 name: Sync to Hugging Face Space
 
@@ -13,16 +16,56 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      # Opt JavaScript actions into Node 24 early (GitHub runner default June 2026).
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: huggingface/hub-sync@v0.1.0
+      - uses: actions/setup-python@v6
         with:
-          github_repo_id: ${{ github.repository }}
-          huggingface_repo_id: StevenAu/MIDI-PHOR
-          hf_token: ${{ secrets.HF_TOKEN }}
-          repo_type: space
-          space_sdk: docker
+          python-version: "3.12"
+
+      - name: Install Hugging Face CLI
+        run: pip install -U "huggingface_hub[cli]>=0.30"
+
+      - name: Mirror repository to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO_ID: StevenAu/MIDI-PHOR
+        run: |
+          set -euo pipefail
+          if [[ -z "${HF_TOKEN:-}" ]]; then
+            echo "::error::HF_TOKEN secret is not set (GitHub → Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+
+          echo "::group::Create or update Space"
+          hf repo create "${HF_REPO_ID}" \
+            --repo-type space \
+            --exist-ok \
+            --space-sdk docker
+          echo "::endgroup::"
+
+          echo "::group::Upload (mirror; removes remote files not present locally)"
+          FILE_COUNT=$(find . -type f ! -path './.git/*' ! -path './.github/*' | wc -l | tr -d ' ')
+          if [[ "${FILE_COUNT}" -eq 0 ]]; then
+            echo "::error::No files to upload."
+            exit 1
+          fi
+          echo "Uploading ${FILE_COUNT} files..."
+          hf upload "${HF_REPO_ID}" . \
+            --repo-type space \
+            --exclude=".git*" \
+            --exclude=".github*" \
+            --delete="*" \
+            --commit-message="Sync from GitHub Actions"
+          echo "::endgroup::"
+
+          echo "Done: https://huggingface.co/spaces/${HF_REPO_ID}"
