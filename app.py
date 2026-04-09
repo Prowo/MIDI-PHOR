@@ -382,6 +382,50 @@ def _build_graph_json_and_figures(con, song_id: str, work_dir: str) -> tuple[dic
     return graph_json, p_chords, p_roll, p_graph
 
 
+def _write_demo_exports(
+    export_dir: str,
+    caption: str,
+    prompt_export: str,
+    slots_json: str,
+    graph_json: dict,
+) -> list[str]:
+    """Write JSON/text artifacts for copy-paste and download (CC-BY / research demo)."""
+    Path(export_dir).mkdir(parents=True, exist_ok=True)
+    paths: list[str] = []
+    graph_txt = json.dumps(graph_json, indent=2, ensure_ascii=False)
+
+    for name, body in (
+        ("feature_slots.json", slots_json),
+        ("orchestration_graph.json", graph_txt),
+        ("caption.txt", caption or ""),
+        ("caption_prompt.txt", prompt_export or ""),
+    ):
+        p = os.path.join(export_dir, name)
+        Path(p).write_text(body, encoding="utf-8")
+        paths.append(p)
+
+    try:
+        bundle_obj: dict[str, Any] = {
+            "midiphor_export_version": 1,
+            "caption": caption,
+            "caption_prompt": prompt_export,
+            "feature_slots": json.loads(slots_json) if slots_json.strip() else {},
+            "orchestration_graph": graph_json,
+        }
+    except json.JSONDecodeError:
+        bundle_obj = {
+            "midiphor_export_version": 1,
+            "caption": caption,
+            "caption_prompt": prompt_export,
+            "feature_slots_raw": slots_json,
+            "orchestration_graph": graph_json,
+        }
+    pb = os.path.join(export_dir, "midiphor_export.json")
+    Path(pb).write_text(json.dumps(bundle_obj, indent=2, ensure_ascii=False), encoding="utf-8")
+    paths.append(pb)
+    return paths
+
+
 # ---------- Core Pipeline with Progress ----------
 
 def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
@@ -391,7 +435,8 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
     Returns:
         pipeline_html, status, tables, caption, audio_path,
         export_prompt, export_slots_json,
-        orchestration_graph_json, paths to three figure PNGs (or None).
+        orchestration_graph_json, paths to three figure PNGs (or None),
+        list of written export file paths (JSON/txt) for download.
     """
     if not midi_file:
         return (
@@ -399,6 +444,7 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
             "⚠️ No file uploaded",
             {}, "", None, "", "",
             _EMPTY_GRAPH_JSON, None, None, None,
+            [],
         )
     
     # Lazy load modules
@@ -439,6 +485,7 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
                 f"❌ Symbolic extraction failed: {e}",
                 tables, "", None, "", "",
                 _EMPTY_GRAPH_JSON, None, None, None,
+                [],
             )
         
         # Step 2: Section merging
@@ -518,6 +565,14 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
         
         step_status["caption"] = "completed"
 
+        export_dir = os.path.join(CACHE_DIR, song_id, "export")
+        try:
+            export_paths = _write_demo_exports(
+                export_dir, caption, prompt_export, slots_json, orch_json
+            )
+        except Exception:
+            export_paths = []
+
         # Step 6: Render audio
         audio_path = os.path.join(CACHE_DIR, f"{song_id}.wav")
         sf2 = SF2_PATH if Path(SF2_PATH).is_file() else None
@@ -551,6 +606,7 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
             p_chords,
             p_roll,
             p_graph,
+            export_paths,
         )
 
     except Exception as e:
@@ -559,6 +615,7 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
             f"❌ Error: {str(e)}",
             tables, "", None, "", "",
             _EMPTY_GRAPH_JSON, None, None, None,
+            [],
         )
 
 
@@ -568,6 +625,7 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
     """Main Gradio handler."""
     empty_tables = [_df_for_gradio(None)] * 11
     if midi_file is None:
+        empty_graph_txt = json.dumps(_EMPTY_GRAPH_JSON, indent=2, ensure_ascii=False)
         return (
             create_pipeline_html(0, {}),
             "Upload a MIDI file to begin",
@@ -576,6 +634,8 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
             None,
             "",
             "",
+            empty_graph_txt,
+            None,
             _EMPTY_GRAPH_JSON,
             None,
             None,
@@ -595,7 +655,10 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
         p_chords,
         p_roll,
         p_graph,
+        export_paths,
     ) = process_midi(midi_file, use_llm=use_llm)
+
+    graph_json_text = json.dumps(graph_json, indent=2, ensure_ascii=False)
 
     return (
         pipeline_html,
@@ -615,6 +678,8 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
         audio,
         prompt_export,
         slots_json,
+        graph_json_text,
+        export_paths if export_paths else None,
         graph_json,
         p_chords,
         p_roll,
@@ -641,8 +706,8 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
     if not _OPENAI_KEY:
         gr.Markdown(
             "*This deployment has **no OpenAI API key**: captions use the built-in **template** only. "
-            "Symbolic extraction, tables, and audio preview still run. "
-            "Use **Bring your own LLM** below to copy the same prompt and feature JSON into ChatGPT / Claude / a local model—**your keys stay on your machine**.*"
+            "Symbolic extraction, tables, audio preview, and **JSON/text exports** (copy or download) still run. "
+            "Open **Exports** below to copy the prompt and feature JSON into ChatGPT / Claude / a local model—**your keys stay on your machine**.*"
         )
     elif _OPENAI_MAX:
         gr.Markdown(
@@ -696,28 +761,51 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
                 interactive=False
             )
     
-    # Caption output
+    # Caption output (readable); select text to copy, or use caption.txt in downloads
     caption_output = gr.Textbox(
         label="✍️ Generated Caption",
         lines=4,
         max_lines=8,
-        elem_classes=["caption-box"]
+        elem_classes=["caption-box"],
+        placeholder="Run the pipeline to generate a template or LLM caption.",
     )
 
-    with gr.Accordion("📋 Bring your own LLM (no API key on this server)", open=False):
+    with gr.Accordion("📋 Exports — copy, download, or bring your own LLM", open=False):
         gr.Markdown(
-            "Copy the **prompt** into any chat model you trust, or feed the **JSON** into your own pipeline. "
+            "Use **Code** blocks to select all and copy. **Download** gives the same files on disk: "
+            "`feature_slots.json`, `orchestration_graph.json`, `caption.txt`, `caption_prompt.txt`, "
+            "and **`midiphor_export.json`** (single bundle: caption + prompt + slots + graph). "
             "Nothing here is sent to OpenAI unless you enabled the server-side LLM checkbox above."
         )
-        export_prompt = gr.Textbox(
-            label="Caption prompt (paste into your model)",
+        export_prompt = gr.Code(
+            label="caption_prompt.txt — copy for ChatGPT / Claude / local LLM",
+            language="markdown",
             lines=14,
-            max_lines=24,
+            max_lines=28,
+            interactive=False,
+            wrap_lines=True,
         )
-        export_slots = gr.Textbox(
-            label="Feature slots (JSON)",
+        export_slots = gr.Code(
+            label="feature_slots.json — copy",
+            language="json",
             lines=12,
-            max_lines=24,
+            max_lines=28,
+            interactive=False,
+            wrap_lines=True,
+        )
+        export_graph_code = gr.Code(
+            label="orchestration_graph.json — copy",
+            language="json",
+            lines=14,
+            max_lines=32,
+            interactive=False,
+            wrap_lines=True,
+        )
+        export_files = gr.File(
+            label="Download JSON & text exports",
+            file_count="multiple",
+            type="filepath",
+            interactive=False,
         )
     
     gr.Markdown("---")
@@ -800,6 +888,8 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
         audio_output,
         export_prompt,
         export_slots,
+        export_graph_code,
+        export_files,
         graph_json_out,
         fig_chords,
         fig_roll,
