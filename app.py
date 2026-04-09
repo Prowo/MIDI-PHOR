@@ -220,19 +220,21 @@ def get_modules():
     from assemble.slots import build_slots
     from assemble.llm_prompt import generate_caption_openai, build_caption_prompt
     from assemble.caption import caption_for_song
+    from assemble.paper_exports import build_paper_export_bundle
     from scripts.render_midi import render
-    
+
     return {
-        'connect': connect,
-        'ensure_schema': ensure_schema,
-        'symbolic': symbolic,
-        'graph_ext': graph_ext,
-        'merge_for_song': merge_for_song,
-        'build_slots': build_slots,
-        'build_caption_prompt': build_caption_prompt,
-        'generate_caption_openai': generate_caption_openai,
-        'caption_for_song': caption_for_song,
-        'render': render,
+        "connect": connect,
+        "ensure_schema": ensure_schema,
+        "symbolic": symbolic,
+        "graph_ext": graph_ext,
+        "merge_for_song": merge_for_song,
+        "build_slots": build_slots,
+        "build_caption_prompt": build_caption_prompt,
+        "generate_caption_openai": generate_caption_openai,
+        "caption_for_song": caption_for_song,
+        "build_paper_export_bundle": build_paper_export_bundle,
+        "render": render,
     }
 
 
@@ -388,6 +390,7 @@ def _write_demo_exports(
     prompt_export: str,
     slots_json: str,
     graph_json: dict,
+    paper_bundle: dict[str, Any] | None = None,
 ) -> list[str]:
     """Write JSON/text artifacts for copy-paste and download (CC-BY / research demo)."""
     Path(export_dir).mkdir(parents=True, exist_ok=True)
@@ -404,9 +407,32 @@ def _write_demo_exports(
         Path(p).write_text(body, encoding="utf-8")
         paths.append(p)
 
+    if paper_bundle:
+        sp = os.path.join(export_dir, "scorespec.json")
+        Path(sp).write_text(
+            json.dumps(paper_bundle["scorespec"], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        paths.append(sp)
+        sl = os.path.join(export_dir, "scorespec_lite.json")
+        Path(sl).write_text(
+            json.dumps(paper_bundle["scorespec_lite"], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        paths.append(sl)
+        ef = os.path.join(export_dir, "enhanced_facts.txt")
+        Path(ef).write_text(paper_bundle["enhanced_facts"], encoding="utf-8")
+        paths.append(ef)
+        hf = os.path.join(export_dir, "hierarchical_facts.json")
+        Path(hf).write_text(
+            json.dumps(paper_bundle["hierarchical_facts"], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        paths.append(hf)
+
     try:
         bundle_obj: dict[str, Any] = {
-            "midiphor_export_version": 1,
+            "midiphor_export_version": 2,
             "caption": caption,
             "caption_prompt": prompt_export,
             "feature_slots": json.loads(slots_json) if slots_json.strip() else {},
@@ -414,16 +440,30 @@ def _write_demo_exports(
         }
     except json.JSONDecodeError:
         bundle_obj = {
-            "midiphor_export_version": 1,
+            "midiphor_export_version": 2,
             "caption": caption,
             "caption_prompt": prompt_export,
             "feature_slots_raw": slots_json,
             "orchestration_graph": graph_json,
         }
+    if paper_bundle:
+        bundle_obj["scorespec"] = paper_bundle["scorespec"]
+        bundle_obj["scorespec_lite"] = paper_bundle["scorespec_lite"]
+        bundle_obj["enhanced_facts"] = paper_bundle["enhanced_facts"]
+        bundle_obj["hierarchical_facts"] = paper_bundle["hierarchical_facts"]
     pb = os.path.join(export_dir, "midiphor_export.json")
     Path(pb).write_text(json.dumps(bundle_obj, indent=2, ensure_ascii=False), encoding="utf-8")
     paths.append(pb)
     return paths
+
+
+def _named_export_path(export_paths: list[str] | None, filename: str) -> str | None:
+    if not export_paths:
+        return None
+    for path in export_paths:
+        if Path(path).name == filename:
+            return path
+    return None
 
 
 # ---------- Core Pipeline with Progress ----------
@@ -565,10 +605,20 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
         
         step_status["caption"] = "completed"
 
+        try:
+            paper_bundle = modules["build_paper_export_bundle"](con, song_id, orch_json)
+        except Exception:
+            paper_bundle = None
+
         export_dir = os.path.join(CACHE_DIR, song_id, "export")
         try:
             export_paths = _write_demo_exports(
-                export_dir, caption, prompt_export, slots_json, orch_json
+                export_dir,
+                caption,
+                prompt_export,
+                slots_json,
+                orch_json,
+                paper_bundle=paper_bundle,
             )
         except Exception:
             export_paths = []
@@ -636,6 +686,10 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
             "",
             empty_graph_txt,
             None,
+            None,
+            None,
+            None,
+            None,
             _EMPTY_GRAPH_JSON,
             None,
             None,
@@ -659,6 +713,10 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
     ) = process_midi(midi_file, use_llm=use_llm)
 
     graph_json_text = json.dumps(graph_json, indent=2, ensure_ascii=False)
+    scorespec_file = _named_export_path(export_paths, "scorespec.json")
+    scorespec_lite_file = _named_export_path(export_paths, "scorespec_lite.json")
+    enhanced_facts_file = _named_export_path(export_paths, "enhanced_facts.txt")
+    hierarchical_facts_file = _named_export_path(export_paths, "hierarchical_facts.json")
 
     return (
         pipeline_html,
@@ -679,6 +737,10 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
         prompt_export,
         slots_json,
         graph_json_text,
+        scorespec_file,
+        scorespec_lite_file,
+        enhanced_facts_file,
+        hierarchical_facts_file,
         export_paths if export_paths else None,
         graph_json,
         p_chords,
@@ -772,9 +834,11 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
 
     with gr.Accordion("📋 Exports — copy, download, or bring your own LLM", open=False):
         gr.Markdown(
-            "Use **Code** blocks to select all and copy. **Download** gives the same files on disk: "
-            "`feature_slots.json`, `orchestration_graph.json`, `caption.txt`, `caption_prompt.txt`, "
-            "and **`midiphor_export.json`** (single bundle: caption + prompt + slots + graph). "
+            "Use **Code** blocks to select all and copy. **Download** includes caption/prompt, feature slots, "
+            "orchestration graph, **paper-style exports** (`scorespec.json`, `scorespec_lite.json`, "
+            "`enhanced_facts.txt`, `hierarchical_facts.json`), and **`midiphor_export.json`** (single bundle). "
+            "ScoreSpec-family files are **derived** from this pipeline’s DuckDB tables (see `assemble/paper_exports.py`); "
+            "they are not guaranteed byte-identical to legacy offline exports. "
             "Nothing here is sent to OpenAI unless you enabled the server-side LLM checkbox above."
         )
         export_prompt = gr.Code(
@@ -801,8 +865,30 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
             interactive=False,
             wrap_lines=True,
         )
+        with gr.Row():
+            scorespec_file = gr.File(
+                label="scorespec.json",
+                type="filepath",
+                interactive=False,
+            )
+            scorespec_lite_file = gr.File(
+                label="scorespec_lite.json",
+                type="filepath",
+                interactive=False,
+            )
+        with gr.Row():
+            enhanced_facts_file = gr.File(
+                label="enhanced_facts.txt",
+                type="filepath",
+                interactive=False,
+            )
+            hierarchical_facts_file = gr.File(
+                label="hierarchical_facts.json",
+                type="filepath",
+                interactive=False,
+            )
         export_files = gr.File(
-            label="Download JSON & text exports",
+            label="Full export bundle",
             file_count="multiple",
             type="filepath",
             interactive=False,
@@ -889,6 +975,10 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
         export_prompt,
         export_slots,
         export_graph_code,
+        scorespec_file,
+        scorespec_lite_file,
+        enhanced_facts_file,
+        hierarchical_facts_file,
         export_files,
         graph_json_out,
         fig_chords,

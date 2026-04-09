@@ -30,4 +30,4 @@ Table definitions live in `schema/ddl.sql`. The app uses an ephemeral per-reques
 ## What is not in the default demo path
 
 - Full **audio feature** extraction (`extractors/audio.py`) with Essentia models is optional and needs extra weights in `midi_models/` (see `midi_models/README.md`).
-- **ScoreSpec JSON** export was removed from this trimmed repository; the core caption path does not depend on it.
+- **Legacy ScoreSpec** offline generators (historical `scorespec_json/` tooling) are not in this trimmed repo. The **Gradio demo** instead writes **derived** paper-style exports from the live DuckDB state: see `assemble/paper_exports.py` (`scorespec.json`, `scorespec_lite.json`, `enhanced_facts.txt`, `hierarchical_facts.json`). `assemble/llm_prompt.py` may still *read* pre-made `exports/*.hierarchical_facts.json` when composing prompts from disk; the demo generates its own copies under `cache/`.
