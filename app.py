@@ -648,7 +648,7 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
     4. **Feature Aggregation** — Combines all features into a structured "slots" representation
     5. **Caption Generation** — Uses templates or LLM to produce natural language description
     
-    [GitHub](https://github.com/Prowo/MIDIphor) | [Paper (ACL)](https://aclanthology.org/2026.nlp4musa-1.6/)
+    [GitHub](https://github.com/Prowo/MIDI-PHOR) | [Paper (ACL)](https://aclanthology.org/2026.nlp4musa-1.6/)
     """)
 
 

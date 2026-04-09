@@ -4,6 +4,8 @@ Symbolic MIDI analysis → structured features → natural-language captions (te
 
 **Paper:** [MIDI-PHOR: Multi-View Distillation for Music Understanding and Captioning](https://aclanthology.org/2026.nlp4musa-1.6/) (NLP4MusA 2026) — [PDF](https://aclanthology.org/2026.nlp4musa-1.6.pdf) · [DOI](https://doi.org/10.18653/v1/2026.nlp4musa-1.6)
 
+**Code (public):** [github.com/Prowo/MIDI-PHOR](https://github.com/Prowo/MIDI-PHOR)
+
 ## Quick start
 
 ```bash
