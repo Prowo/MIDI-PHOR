@@ -20,6 +20,8 @@ scipy>=1.10.0
 
 # Data handling
 pandas>=2.0.0
+matplotlib>=3.7.0
+networkx>=3.0
 
 # Music analysis
 music21>=9.0.0

@@ -93,7 +93,8 @@ elif _OPENAI_MAX:
 else:
     _DEFAULT_USE_LLM = os.environ.get("USE_LLM", "true").lower() == "true"
 
-EXAMPLE_MIDI = _ROOT / "examples" / "demo_scale.mid"
+EXAMPLE_MIDI = _ROOT / "examples" / "demo_abba.mid"
+_EMPTY_GRAPH_JSON: dict[str, list] = {"nodes": [], "edges": []}
 
 
 # ---------- Pipeline Step Definitions ----------
@@ -252,6 +253,135 @@ def _slots_to_json(slots: dict[str, Any]) -> str:
     return json.dumps(norm(slots), indent=2, ensure_ascii=False)
 
 
+def _df_for_gradio(df: pd.DataFrame | None) -> pd.DataFrame:
+    """Gradio shows bogus placeholder rows/columns when value is None or empty."""
+    if df is None:
+        return pd.DataFrame({"—": ["Upload a MIDI file and run the pipeline (or use the Example)."]})
+    try:
+        if df.empty:
+            return pd.DataFrame({"—": ["No rows for this table in this piece."]})
+    except Exception:
+        return pd.DataFrame({"—": ["(could not read table)"]})
+    out = df.copy()
+    for c in out.columns:
+        if str(out[c].dtype) == "object":
+            out[c] = out[c].apply(lambda x: "" if x is None else x)
+    return out
+
+
+def _build_graph_json_and_figures(con, song_id: str, work_dir: str) -> tuple[dict, str | None, str | None, str | None]:
+    """Orchestration graph as JSON + three static figures (saved PNG paths)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import networkx as nx
+
+    os.makedirs(work_dir, exist_ok=True)
+    graph_json: dict[str, list] = {"nodes": [], "edges": []}
+    p_chords: str | None = None
+    p_roll: str | None = None
+    p_graph: str | None = None
+
+    try:
+        ndf = con.execute(
+            "SELECT node_id, node_type, role, family FROM graph_nodes WHERE song_id=? ORDER BY node_id",
+            [song_id],
+        ).fetchdf()
+        graph_json["nodes"] = ndf.to_dict(orient="records")
+    except Exception:
+        pass
+    try:
+        edf = con.execute(
+            "SELECT src_node_id, dst_node_id, rel_type, strength FROM graph_edges WHERE song_id=? ORDER BY strength DESC NULLS LAST",
+            [song_id],
+        ).fetchdf()
+        graph_json["edges"] = edf.to_dict(orient="records")
+    except Exception:
+        pass
+
+    # Figure 1: chord / RN events over time
+    try:
+        cdf = con.execute(
+            """
+            SELECT onset_bar, onset_beat, COALESCE(rn, name, '?') AS label
+            FROM chords WHERE song_id=? ORDER BY onset_bar, onset_beat LIMIT 80
+            """,
+            [song_id],
+        ).fetchdf()
+        if cdf is not None and not cdf.empty:
+            x = cdf["onset_bar"].astype(float) + cdf["onset_beat"].astype(float) / 4.0
+            fig, ax = plt.subplots(figsize=(10, 2.8))
+            ax.scatter(x, range(len(x)), c="#6366f1", s=42, alpha=0.85)
+            for i, (_, row) in enumerate(cdf.iterrows()):
+                ax.text(float(x.iloc[i]), i, str(row["label"])[:10], fontsize=7, va="center", ha="left")
+            ax.set_xlabel("Approx. position (bar + beat/4)")
+            ax.set_ylabel("Chord index")
+            ax.set_title("Chord / Roman-numeral timeline (sample)")
+            ax.grid(True, alpha=0.25)
+            fig.tight_layout()
+            p_chords = os.path.join(work_dir, f"{song_id}_chords.png")
+            fig.savefig(p_chords, dpi=120)
+            plt.close(fig)
+    except Exception:
+        pass
+
+    # Figure 2: piano roll (sample of notes)
+    try:
+        ndf = con.execute(
+            """
+            SELECT onset_bar, onset_beat, pitch, velocity
+            FROM notes WHERE song_id=? ORDER BY onset_bar, onset_beat LIMIT 400
+            """,
+            [song_id],
+        ).fetchdf()
+        if ndf is not None and not ndf.empty:
+            xb = ndf["onset_bar"].astype(float) + ndf["onset_beat"].astype(float) / 4.0
+            fig, ax = plt.subplots(figsize=(10, 4))
+            sc = ax.scatter(xb, ndf["pitch"], c=ndf["velocity"], cmap="viridis", s=8, alpha=0.65)
+            plt.colorbar(sc, ax=ax, label="velocity")
+            ax.set_xlabel("Approx. position (bar + beat/4)")
+            ax.set_ylabel("MIDI pitch")
+            ax.set_title("Piano roll (sample of notes)")
+            ax.grid(True, alpha=0.2)
+            fig.tight_layout()
+            p_roll = os.path.join(work_dir, f"{song_id}_roll.png")
+            fig.savefig(p_roll, dpi=120)
+            plt.close(fig)
+    except Exception:
+        pass
+
+    # Figure 3: graph layout
+    try:
+        if graph_json["nodes"] and graph_json["edges"]:
+            g = nx.DiGraph()
+            for n in graph_json["nodes"]:
+                nid = n.get("node_id")
+                if nid:
+                    g.add_node(str(nid), label=n.get("role") or n.get("node_type") or "")
+            for e in graph_json["edges"]:
+                s, d = e.get("src_node_id"), e.get("dst_node_id")
+                if s and d:
+                    g.add_edge(str(s), str(d), w=float(e.get("strength") or 0.1))
+            if len(g.nodes) > 0:
+                fig, ax = plt.subplots(figsize=(8, 6))
+                pos = nx.spring_layout(g, seed=42, k=0.35)
+                nx.draw_networkx_nodes(g, pos, ax=ax, node_color="#a78bfa", node_size=520, alpha=0.9)
+                nx.draw_networkx_edges(g, pos, ax=ax, edge_color="#94a3b8", arrows=True, arrowsize=12)
+                labels = {n: (g.nodes[n].get("label") or n)[:12] for n in g.nodes}
+                nx.draw_networkx_labels(g, pos, labels=labels, ax=ax, font_size=7)
+                ax.set_title("Orchestration graph (nodes = parts, edges = relations)")
+                ax.axis("off")
+                fig.tight_layout()
+                p_graph = os.path.join(work_dir, f"{song_id}_graph.png")
+                fig.savefig(p_graph, dpi=120)
+                plt.close(fig)
+    except Exception:
+        pass
+
+    return graph_json, p_chords, p_roll, p_graph
+
+
 # ---------- Core Pipeline with Progress ----------
 
 def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
@@ -260,13 +390,15 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
 
     Returns:
         pipeline_html, status, tables, caption, audio_path,
-        export_prompt (for user's own LLM), export_slots_json
+        export_prompt, export_slots_json,
+        orchestration_graph_json, paths to three figure PNGs (or None).
     """
     if not midi_file:
         return (
             create_pipeline_html(0, {}),
             "⚠️ No file uploaded",
-            {}, "", None, "", ""
+            {}, "", None, "", "",
+            _EMPTY_GRAPH_JSON, None, None, None,
         )
     
     # Lazy load modules
@@ -305,7 +437,8 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
             return (
                 create_pipeline_html(1, step_status),
                 f"❌ Symbolic extraction failed: {e}",
-                tables, "", None, "", ""
+                tables, "", None, "", "",
+                _EMPTY_GRAPH_JSON, None, None, None,
             )
         
         # Step 2: Section merging
@@ -358,7 +491,10 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
         # Export pack for "bring your own LLM" (no server API key required to use this text)
         prompt_export = modules["build_caption_prompt"](con, song_id, section_id=None, style="medium")
         slots_json = _slots_to_json(slots)
-        
+
+        fig_dir = os.path.join(CACHE_DIR, song_id, "figs")
+        orch_json, p_chords, p_roll, p_graph = _build_graph_json_and_figures(con, song_id, fig_dir)
+
         # Step 5: Generate caption
         quota_note = ""
         if use_llm and _OPENAI_KEY:
@@ -381,7 +517,7 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
                 caption += "\n\n(This deployment has no LLM API key; using template caption.)"
         
         step_status["caption"] = "completed"
-        
+
         # Step 6: Render audio
         audio_path = os.path.join(CACHE_DIR, f"{song_id}.wav")
         sf2 = SF2_PATH if Path(SF2_PATH).is_file() else None
@@ -411,13 +547,18 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
             audio_path if audio_path and os.path.exists(audio_path) else None,
             prompt_export,
             slots_json,
+            orch_json,
+            p_chords,
+            p_roll,
+            p_graph,
         )
-        
+
     except Exception as e:
         return (
             create_pipeline_html(0, step_status),
             f"❌ Error: {str(e)}",
-            tables, "", None, "", ""
+            tables, "", None, "", "",
+            _EMPTY_GRAPH_JSON, None, None, None,
         )
 
 
@@ -425,40 +566,59 @@ def process_midi(midi_file: str, use_llm: bool = True) -> Tuple:
 
 def run_pipeline(midi_file, use_llm_checkbox: bool):
     """Main Gradio handler."""
+    empty_tables = [_df_for_gradio(None)] * 11
     if midi_file is None:
         return (
             create_pipeline_html(0, {}),
             "Upload a MIDI file to begin",
-            None, None, None, None, None, None, None, None, None, None, None,
+            *empty_tables,
             "",
             None,
             "",
             "",
+            _EMPTY_GRAPH_JSON,
+            None,
+            None,
+            None,
         )
 
     use_llm = bool(use_llm_checkbox) and _OPENAI_KEY
-    pipeline_html, status, tables, caption, audio, prompt_export, slots_json = process_midi(
-        midi_file, use_llm=use_llm
-    )
-    
-    return (
+    (
         pipeline_html,
         status,
-        tables.get("songs"),
-        tables.get("tracks"),
-        tables.get("notes"),
-        tables.get("chords"),
-        tables.get("bars"),
-        tables.get("key_changes"),
-        tables.get("sections"),
-        tables.get("bar_metrics"),
-        tables.get("graph_nodes"),
-        tables.get("graph_edges"),
-        tables.get("feature_slots"),
+        tables,
         caption,
         audio,
         prompt_export,
         slots_json,
+        graph_json,
+        p_chords,
+        p_roll,
+        p_graph,
+    ) = process_midi(midi_file, use_llm=use_llm)
+
+    return (
+        pipeline_html,
+        status,
+        _df_for_gradio(tables.get("songs")),
+        _df_for_gradio(tables.get("tracks")),
+        _df_for_gradio(tables.get("notes")),
+        _df_for_gradio(tables.get("chords")),
+        _df_for_gradio(tables.get("bars")),
+        _df_for_gradio(tables.get("key_changes")),
+        _df_for_gradio(tables.get("sections")),
+        _df_for_gradio(tables.get("bar_metrics")),
+        _df_for_gradio(tables.get("graph_nodes")),
+        _df_for_gradio(tables.get("graph_edges")),
+        _df_for_gradio(tables.get("feature_slots")),
+        caption,
+        audio,
+        prompt_export,
+        slots_json,
+        graph_json,
+        p_chords,
+        p_roll,
+        p_graph,
     )
 
 
@@ -593,6 +753,17 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
                 tbl_bar_metrics = gr.Dataframe(label="bar_metrics", interactive=False, wrap=True)
     
     with gr.Accordion("🔗 Step 3: Orchestration Graph", open=False):
+        gr.Markdown(
+            "**JSON** is the same structure you can pass to downstream tools (`nodes` / `edges`). "
+            "**Figures** are quick matplotlib previews from this run."
+        )
+        graph_json_out = gr.JSON(label="Orchestration graph (JSON)")
+        with gr.Row():
+            with gr.Column():
+                fig_chords = gr.Image(label="Chord / RN timeline", type="filepath", interactive=False)
+            with gr.Column():
+                fig_roll = gr.Image(label="Piano roll (sample)", type="filepath", interactive=False)
+        fig_graph = gr.Image(label="Graph layout", type="filepath", interactive=False)
         with gr.Row():
             with gr.Column():
                 gr.Markdown("**Graph Nodes (Instruments)**")
@@ -607,13 +778,27 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
     
     # Event handlers
     outputs = [
-        pipeline_display, status_display,
-        tbl_songs, tbl_tracks, tbl_notes, tbl_chords, tbl_bars, tbl_keys,
-        tbl_sections, tbl_bar_metrics,
-        tbl_graph_nodes, tbl_graph_edges,
+        pipeline_display,
+        status_display,
+        tbl_songs,
+        tbl_tracks,
+        tbl_notes,
+        tbl_chords,
+        tbl_bars,
+        tbl_keys,
+        tbl_sections,
+        tbl_bar_metrics,
+        tbl_graph_nodes,
+        tbl_graph_edges,
         tbl_slots,
-        caption_output, audio_output,
-        export_prompt, export_slots,
+        caption_output,
+        audio_output,
+        export_prompt,
+        export_slots,
+        graph_json_out,
+        fig_chords,
+        fig_roll,
+        fig_graph,
     ]
 
     if EXAMPLE_MIDI.is_file():
