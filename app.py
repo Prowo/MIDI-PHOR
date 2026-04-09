@@ -256,14 +256,16 @@ def _slots_to_json(slots: dict[str, Any]) -> str:
 
 
 def _df_for_gradio(df: pd.DataFrame | None) -> pd.DataFrame:
-    """Gradio shows bogus placeholder rows/columns when value is None or empty."""
+    """Avoid Gradio's default empty grid (numeric row/column labels 1,2,3…): always use named columns."""
     if df is None:
-        return pd.DataFrame({"—": ["Upload a MIDI file and run the pipeline (or use the Example)."]})
+        return pd.DataFrame(
+            {"Info": ["Upload a MIDI file, click **Run Pipeline** (or use **Examples** below)."]}
+        )
     try:
-        if df.empty:
-            return pd.DataFrame({"—": ["No rows for this table in this piece."]})
+        if df.empty or len(df.columns) == 0:
+            return pd.DataFrame({"Info": ["No rows for this table in this piece."]})
     except Exception:
-        return pd.DataFrame({"—": ["(could not read table)"]})
+        return pd.DataFrame({"Info": ["(could not read table)"]})
     out = df.copy()
     for c in out.columns:
         if str(out[c].dtype) == "object":
@@ -455,15 +457,6 @@ def _write_demo_exports(
     Path(pb).write_text(json.dumps(bundle_obj, indent=2, ensure_ascii=False), encoding="utf-8")
     paths.append(pb)
     return paths
-
-
-def _named_export_path(export_paths: list[str] | None, filename: str) -> str | None:
-    if not export_paths:
-        return None
-    for path in export_paths:
-        if Path(path).name == filename:
-            return path
-    return None
 
 
 # ---------- Core Pipeline with Progress ----------
@@ -678,17 +671,13 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
         empty_graph_txt = json.dumps(_EMPTY_GRAPH_JSON, indent=2, ensure_ascii=False)
         return (
             create_pipeline_html(0, {}),
-            "Upload a MIDI file to begin",
+            "Upload a MIDI file, then click **Run Pipeline** (or use **Examples**).",
             *empty_tables,
             "",
             None,
             "",
             "",
             empty_graph_txt,
-            None,
-            None,
-            None,
-            None,
             None,
             _EMPTY_GRAPH_JSON,
             None,
@@ -713,10 +702,7 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
     ) = process_midi(midi_file, use_llm=use_llm)
 
     graph_json_text = json.dumps(graph_json, indent=2, ensure_ascii=False)
-    scorespec_file = _named_export_path(export_paths, "scorespec.json")
-    scorespec_lite_file = _named_export_path(export_paths, "scorespec_lite.json")
-    enhanced_facts_file = _named_export_path(export_paths, "enhanced_facts.txt")
-    hierarchical_facts_file = _named_export_path(export_paths, "hierarchical_facts.json")
+    cap = "" if caption is None else str(caption)
 
     return (
         pipeline_html,
@@ -732,15 +718,11 @@ def run_pipeline(midi_file, use_llm_checkbox: bool):
         _df_for_gradio(tables.get("graph_nodes")),
         _df_for_gradio(tables.get("graph_edges")),
         _df_for_gradio(tables.get("feature_slots")),
-        caption,
+        cap,
         audio,
         prompt_export,
         slots_json,
         graph_json_text,
-        scorespec_file,
-        scorespec_lite_file,
-        enhanced_facts_file,
-        hierarchical_facts_file,
         export_paths if export_paths else None,
         graph_json,
         p_chords,
@@ -789,7 +771,7 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
     
     # Pipeline visualization
     pipeline_display = gr.HTML(create_pipeline_html(0, {}))
-    status_display = gr.Markdown("Upload a MIDI file to begin")
+    status_display = gr.Markdown("Upload a MIDI file, then click **Run Pipeline** (or use **Examples**).")
     
     _llm_info = None
     if _OPENAI_KEY and _OPENAI_MAX:
@@ -834,11 +816,10 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
 
     with gr.Accordion("📋 Exports — copy, download, or bring your own LLM", open=False):
         gr.Markdown(
-            "Use **Code** blocks to select all and copy. **Download** includes caption/prompt, feature slots, "
-            "orchestration graph, **paper-style exports** (`scorespec.json`, `scorespec_lite.json`, "
-            "`enhanced_facts.txt`, `hierarchical_facts.json`), and **`midiphor_export.json`** (single bundle). "
-            "ScoreSpec-family files are **derived** from this pipeline’s DuckDB tables (see `assemble/paper_exports.py`); "
-            "they are not guaranteed byte-identical to legacy offline exports. "
+            "Use **Code** blocks to select all and copy. **Download** is one multi-file control: it includes "
+            "`scorespec.json`, `scorespec_lite.json`, `enhanced_facts.txt`, `hierarchical_facts.json`, "
+            "`feature_slots.json`, `orchestration_graph.json`, `caption.txt`, `caption_prompt.txt`, and "
+            "`midiphor_export.json`. ScoreSpec-family files are **derived** in `assemble/paper_exports.py`. "
             "Nothing here is sent to OpenAI unless you enabled the server-side LLM checkbox above."
         )
         export_prompt = gr.Code(
@@ -865,30 +846,8 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
             interactive=False,
             wrap_lines=True,
         )
-        with gr.Row():
-            scorespec_file = gr.File(
-                label="scorespec.json",
-                type="filepath",
-                interactive=False,
-            )
-            scorespec_lite_file = gr.File(
-                label="scorespec_lite.json",
-                type="filepath",
-                interactive=False,
-            )
-        with gr.Row():
-            enhanced_facts_file = gr.File(
-                label="enhanced_facts.txt",
-                type="filepath",
-                interactive=False,
-            )
-            hierarchical_facts_file = gr.File(
-                label="hierarchical_facts.json",
-                type="filepath",
-                interactive=False,
-            )
         export_files = gr.File(
-            label="Full export bundle",
+            label="Download all exports (JSON, txt, bundle — includes ScoreSpec-style files)",
             file_count="multiple",
             type="filepath",
             interactive=False,
@@ -975,10 +934,6 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
         export_prompt,
         export_slots,
         export_graph_code,
-        scorespec_file,
-        scorespec_lite_file,
-        enhanced_facts_file,
-        hierarchical_facts_file,
         export_files,
         graph_json_out,
         fig_chords,
@@ -999,13 +954,7 @@ with gr.Blocks(title="MIDIPHOR Demo") as demo:
     submit_btn.click(
         fn=run_pipeline,
         inputs=[midi_input, use_llm],
-        outputs=outputs
-    )
-    
-    midi_input.change(
-        fn=run_pipeline,
-        inputs=[midi_input, use_llm],
-        outputs=outputs
+        outputs=outputs,
     )
     
     gr.Markdown("""
