@@ -67,23 +67,35 @@ def main() -> int:
         print("create_repo failed (need WRITE token or create Space once in the web UI):", e)
         return 1
 
-    print("Uploading files (this may take a few minutes)...")
+    # Exclude local dev artifacts (can be *gigabytes* — never upload to HF)
+    ignore_patterns = [
+        "**/.git/**",
+        "**/__pycache__/**",
+        "**/.venv/**",
+        "**/venv/**",
+        "**/env/**",
+        "**/.idea/**",
+        "**/.vscode/**",
+        "**/cache/**",
+        "**/data/**",
+        "**/clean_midi/**",
+        "**/clean_audio/**",
+        "**/exports/**",
+        "**/scorespec_json/**",
+        "**/*.duckdb",
+        "**/*.db",
+        "**/*.sqlite",
+        "**/.env",
+        "**/.env.*",
+        "**/*.wav",
+    ]
+
+    print("Uploading files (only source — excludes .venv, cache, data, etc.)...")
     api.upload_folder(
         folder_path=str(root),
         repo_id=repo_id,
         repo_type="space",
-        ignore_patterns=[
-            "**/.git/**",
-            "**/__pycache__/**",
-            "**/.venv/**",
-            "**/venv/**",
-            "**/.idea/**",
-            "**/.vscode/**",
-            "**/cache/**",
-            "**/*.duckdb",
-            "**/.env",
-            "**/.env.*",
-        ],
+        ignore_patterns=ignore_patterns,
     )
     print(f"Done. Open: https://huggingface.co/spaces/{repo_id}")
     return 0

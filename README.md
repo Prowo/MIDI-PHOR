@@ -1,3 +1,13 @@
+---
+title: MIDIPHOR
+emoji: 🎹
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+license: mit
+---
+
 # MIDIPHOR — MIDI captioning demo
 
 Symbolic MIDI analysis → structured features → natural-language captions (template or LLM). This repository is trimmed for a **web demo** (Gradio), embedding on other sites, and optional Hugging Face Spaces deployment.

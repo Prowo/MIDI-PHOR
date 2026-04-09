@@ -68,4 +68,6 @@ scorespec_json/
 # Build artifacts and large generated outputs
 exports/
 clean_audio/
+clean_midi/
 cache/
+data/

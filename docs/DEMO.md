@@ -43,6 +43,10 @@ python scripts/hf_push_space.py --repo-id StevenAu/MIDI-PHOR
 
 This creates the Docker Space (if missing) and uploads the project. If `create_repo` returns **403**, your token cannot create Spaces — create the Space once in the web UI (Docker SDK), then either connect **GitHub** `Prowo/MIDI-PHOR` in Space settings or run the script again after fixing token permissions.
 
+**Recommended:** In the Space **Settings → Repository**, connect **GitHub** `Prowo/MIDI-PHOR` (branch `main`). That avoids uploading your whole laptop folder (including accidental `cache/`, `.venv/`, `data/`).
+
+If you use `hf_push_space.py`, it **ignores** those paths; never paste API tokens into chat — use `HF_TOKEN` in your shell only, then **revoke** the token if it was exposed.
+
 1. Create a **Docker** Space and push this repository.
 2. The `Dockerfile` installs FluidSynth and the Debian `fluid-soundfont-gm` package, and sets `SF2_PATH` for the container.
 3. **OpenAI (optional):** You do **not** need to set `OPENAI_API_KEY`. Without it, the Space runs in **template-only** caption mode and the LLM checkbox is hidden.
