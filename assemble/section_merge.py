@@ -40,21 +40,18 @@ def _novelty_boundaries(con: duckdb.DuckDBPyConnection, song_id: str, cfg: Merge
     if not cnt:
         return []
 
-    # compute z into a temp view (safe, no writes)
-    con.execute("""
-        CREATE TEMP VIEW IF NOT EXISTS __nov_base AS
-        SELECT bar, value
-        FROM ts_bar WHERE song_id=? AND feature=?
-    """, [song_id, cfg.novelty_feature])
-
     # peak picking: simple 1-bar neighborhood and z-threshold
     rows = con.execute("""
-        WITH z AS (
+        WITH base AS (
+          SELECT bar, value
+          FROM ts_bar WHERE song_id=? AND feature=?
+        ),
+        z AS (
           SELECT
             bar,
             value,
             (value - AVG(value) OVER()) / NULLIF(stddev_samp(value) OVER(), 0) AS z
-          FROM __nov_base
+          FROM base
         ),
         pk AS (
           SELECT
@@ -65,7 +62,7 @@ def _novelty_boundaries(con: duckdb.DuckDBPyConnection, song_id: str, cfg: Merge
         )
         SELECT bar FROM pk WHERE is_peak AND z >= ?
         ORDER BY bar
-    """, [cfg.novelty_peak_z]).fetchall()
+    """, [song_id, cfg.novelty_feature, cfg.novelty_peak_z]).fetchall()
 
     return [int(b) for (b,) in rows]
 

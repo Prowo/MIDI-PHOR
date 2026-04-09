@@ -17,7 +17,17 @@ def main():
     ap.add_argument("--audio_glob", required=False, help="Glob e.g. 'data/**/*.wav' (original audio)")
     ap.add_argument("--sf2", default=None, help="SoundFont (.sf2) for fluidsynth (optional)")
     ap.add_argument("--render_dir", default="cache", help="Where to write WAV renders")
-    ap.add_argument("--skip_audio", action="store_true", help="Skip audio rendering/features")
+    ap.add_argument(
+        "--audio_mode",
+        choices=["symbolic_only", "audio_original_if_provided", "audio_synth_render"],
+        default="audio_synth_render",
+        help="Audio handling: symbolic-only, use original audio if present, or render from MIDI when needed.",
+    )
+    ap.add_argument(
+        "--skip_audio",
+        action="store_true",
+        help="Deprecated: use --audio_mode symbolic_only",
+    )
     ap.add_argument("--caption_mode", choices=["short","medium"], default="short", help="Caption detail level")
     args = ap.parse_args()
 
@@ -53,13 +63,18 @@ def main():
                 print("Symbolic failed:", e)
 
         # 2) Audio (optional)
-        if not args.skip_audio:
+        audio_mode = "symbolic_only" if args.skip_audio else args.audio_mode
+        if audio_mode != "symbolic_only":
             try:
                 cfg = audio_ext.AudioConfig(soundfont_path=args.sf2)
                 wav_out = str(Path(args.render_dir) / f"{song_id}.wav")
                 audio_in = str(rec['audio']) if 'audio' in rec else None
-                audio_ext.run(song_id, midi_path, con, wav_out=wav_out, audio_in=audio_in, cfg=cfg)
-                print("Audio: OK")
+                if audio_mode == "audio_original_if_provided" and not audio_in:
+                    # Do not synthesize; only run when original audio exists
+                    pass
+                else:
+                    audio_ext.run(song_id, midi_path, con, wav_out=wav_out, audio_in=audio_in, cfg=cfg)
+                    print("Audio: OK")
             except Exception as e:
                 print("Audio failed:", e)
 

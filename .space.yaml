@@ -1,0 +1,19 @@
+# Hugging Face Spaces Configuration
+# https://huggingface.co/docs/hub/spaces-config-reference
+
+title: MIDIPHOR
+emoji: 🎹
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+
+# Hardware (free tier)
+hardware: cpu-basic
+
+# Secrets / variables (HF Space settings — all optional):
+# - OPENAI_API_KEY: omit for template-only captions (recommended for public demos)
+# - OPENAI_MAX_CALLS: e.g. 25 to cap successful LLM calls
+# - LLM_QUOTA_PATH: persist quota counter on mounted volume (optional)
+# - USE_LLM: default "false" when using a cap so visitors opt in to LLM

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any, List, Tuple
+from collections import Counter
 
 try:
     # Optional: used to render Roman numerals to absolute chord names
@@ -85,6 +86,129 @@ def song_key(con: duckdb.DuckDBPyConnection, song_id: str, bars: Tuple[int, int]
         [song_id],
     ).fetchone()
     return (str(row[0]) if row and row[0] else None)
+
+
+def _pc_name(pc: int) -> str:
+    # Prefer flat spellings to better match common chord estimators (Chordino/Essentia).
+    names = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+    return names[int(pc) % 12]
+
+
+def _chord_label(root_pc: Optional[int], quality: Optional[str]) -> Optional[str]:
+    if root_pc is None:
+        return None
+    root = _pc_name(int(root_pc))
+    q = (quality or "").lower().strip()
+    if q in ("min", "minor"):
+        return root + "m"
+    if q in ("maj", "major", ""):
+        return root
+    if q in ("dim", "diminished"):
+        return root + "dim"
+    if q in ("aug", "augmented"):
+        return root + "aug"
+    if q in ("dom", "dominant"):
+        return root + "7"
+    if q.startswith("sus"):
+        return root + q
+    return root
+
+
+def _find_most_repeating_sequence(chords_list: List[str], sequence_length: int) -> Tuple[Optional[Tuple[str, ...]], int]:
+    if len(chords_list) < sequence_length:
+        return None, 0
+    sequences = [tuple(chords_list[i : i + sequence_length]) for i in range(len(chords_list) - sequence_length + 1)]
+    sequences = [s for s in sequences if s and s[0] != s[-1]]
+    if not sequences:
+        return None, 0
+    most_common_sequence, count = Counter(sequences).most_common(1)[0]
+    return most_common_sequence, int(count)
+
+
+def _give_me_final_seq(chords: List[str]) -> Tuple[Optional[List[str]], int]:
+    sequence_3, count_3 = _find_most_repeating_sequence(chords, 3)
+    sequence_4, count_4 = _find_most_repeating_sequence(chords, 4)
+    sequence_5, count_5 = _find_most_repeating_sequence(chords, 5)
+    total = count_3 + count_4 + count_5
+    if total == 0:
+        return (chords if chords else None), (1 if chords else 0)
+    if count_5 > 0.25 * total and count_5 > 0.79 * max(1, count_4):
+        return (list(sequence_5) if sequence_5 else None), count_5
+    if count_4 > 0.30 * total and count_4 > 0.79 * max(1, count_3):
+        return (list(sequence_4) if sequence_4 else None), count_4
+    return (list(sequence_3) if sequence_3 else None), count_3
+
+
+def chord_summary_abs(con: duckdb.DuckDBPyConnection, song_id: str, bars: Tuple[int, int]) -> Tuple[Optional[List[str]], int]:
+    """
+    Return a MIDICAPS-style repeating chord summary, but derived from symbolic chords.
+    Format: (sequence:list[str] | None, count:int)
+    """
+    rows = con.execute(
+        """
+        SELECT root_pc, quality
+        FROM chords
+        WHERE song_id=? AND onset_bar BETWEEN ? AND ?
+        ORDER BY onset_bar, onset_beat
+        """,
+        [song_id, int(bars[0]), int(bars[1])],
+    ).fetchall()
+    if not rows:
+        return None, 0
+    names: List[str] = []
+    prev = None
+    for root_pc, qual in rows:
+        lab = _chord_label(root_pc, qual)
+        if not lab:
+            continue
+        if lab != prev:
+            names.append(lab)
+            prev = lab
+    if len(names) < 3:
+        return (names if names else None), (1 if names else 0)
+    seq, cnt = _give_me_final_seq(names)
+    if seq is not None and len(seq) == 4 and seq[0] == seq[2] and seq[1] == seq[3]:
+        seq = seq[:2]
+    return seq, int(cnt)
+
+
+def instruments_summary(con: duckdb.DuckDBPyConnection, song_id: str, bars: Tuple[int, int], top_n: int = 5) -> List[str]:
+    """
+    Top instrument names by total note duration (symbolic), de-duplicated, up to top_n.
+    """
+    rows = con.execute(
+        """
+        SELECT t.gm_program, t.role, SUM(n.offset_sec - n.onset_sec) AS dur
+        FROM notes n
+        JOIN tracks t USING(song_id, track_id)
+        WHERE n.song_id=? AND n.onset_bar BETWEEN ? AND ?
+        GROUP BY t.gm_program, t.role
+        ORDER BY dur DESC NULLS LAST
+        """,
+        [song_id, int(bars[0]), int(bars[1])],
+    ).fetchall()
+
+    def inst_name(gm_program: Optional[int], role: Optional[str]) -> str:
+        r = (role or "").lower()
+        if r == "drums":
+            return "Drums"
+        if gm_program is None:
+            return "Unknown"
+        try:
+            import pretty_midi
+
+            return pretty_midi.program_to_instrument_name(int(gm_program))
+        except Exception:
+            return f"GM_{int(gm_program)}"
+
+    out: List[str] = []
+    for prog, role, _dur in rows:
+        nm = inst_name(prog, role)
+        if nm not in out:
+            out.append(nm)
+        if len(out) >= int(top_n):
+            break
+    return out
 
 
 def roman_seq(
@@ -233,6 +357,8 @@ def build_slots(con: duckdb.DuckDBPyConnection, song_id: str, section_id: Option
       - texture_blurb: Optional[str]
       - tags: List[str]
       - events: List[Dict]
+      - chord_summary_abs: (Optional[List[str]], int)
+      - instruments_summary: List[str]
       - section_id: Optional[str]
     """
     bars = get_span(con, song_id, section_id)
@@ -258,6 +384,8 @@ def build_slots(con: duckdb.DuckDBPyConnection, song_id: str, section_id: Option
         rhythm_trait = "syncopated off-beats"
 
     ev = salient_events(con, song_id, bars, top_n=6)
+    ch_seq, ch_cnt = chord_summary_abs(con, song_id, bars)
+    inst_sum = instruments_summary(con, song_id, bars, top_n=5)
 
     return {
         "bars": bars,
@@ -276,6 +404,8 @@ def build_slots(con: duckdb.DuckDBPyConnection, song_id: str, section_id: Option
         "texture_blurb": texture,
         "tags": tags,
         "events": ev,
+        "chord_summary_abs": [ch_seq, ch_cnt],
+        "instruments_summary": inst_sum,
         "section_id": section_id,
     }
 

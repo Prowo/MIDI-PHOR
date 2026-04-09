@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDIPHOR Caption Widget</title>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --accent: #8b5cf6;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --bg: #ffffff;
+            --bg-secondary: #f8fafc;
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --radius: 12px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        .midiphor-widget {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 600px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+
+        .midiphor-header {
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            color: white;
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .midiphor-header h3 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        /* Pipeline visualization */
+        .pipeline-mini {
+            display: flex;
+            justify-content: space-around;
+            padding: 12px 16px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .pipeline-step-mini {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .step-dot {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            transition: all 0.3s;
+            position: relative;
+        }
+
+        .step-dot.completed {
+            background: var(--success);
+            color: white;
+        }
+
+        .step-dot.active {
+            background: var(--warning);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+            50% { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+        }
+
+        .step-label {
+            font-size: 9px;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        .step-dot.completed + .step-label,
+        .step-dot.active + .step-label {
+            color: var(--text);
+            font-weight: 500;
+        }
+
+        .midiphor-body {
+            padding: 20px;
+        }
+
+        .midiphor-dropzone {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 32px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: var(--bg-secondary);
+        }
+
+        .midiphor-dropzone:hover,
+        .midiphor-dropzone.dragover {
+            border-color: var(--primary);
+            background: #f0f0ff;
+        }
+
+        .midiphor-dropzone-icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+
+        .midiphor-dropzone-text {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .midiphor-dropzone-text strong {
+            color: var(--primary);
+        }
+
+        .midiphor-file-input {
+            display: none;
+        }
+
+        .midiphor-status {
+            margin-top: 16px;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+            text-align: center;
+        }
+
+        .midiphor-status.loading {
+            display: block;
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .midiphor-status.error {
+            display: block;
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .midiphor-result {
+            display: none;
+            margin-top: 16px;
+        }
+
+        .midiphor-result.visible {
+            display: block;
+        }
+
+        .midiphor-caption {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 16px;
+            font-size: 15px;
+            line-height: 1.6;
+            color: var(--text);
+            border-left: 4px solid var(--primary);
+        }
+
+        .midiphor-audio {
+            margin-top: 12px;
+            width: 100%;
+        }
+
+        .midiphor-features {
+            margin-top: 12px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .midiphor-features-toggle {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 8px 0;
+        }
+
+        .midiphor-features-toggle:hover {
+            color: var(--primary);
+        }
+
+        .midiphor-features-content {
+            display: none;
+            margin-top: 8px;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.8;
+        }
+
+        .midiphor-features-content.visible {
+            display: block;
+        }
+
+        .feature-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .feature-table td {
+            padding: 4px 8px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .feature-table td:first-child {
+            font-weight: 500;
+            color: var(--text-muted);
+            width: 100px;
+        }
+
+        .midiphor-footer {
+            padding: 12px 20px;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            font-size: 11px;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        .midiphor-footer a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #fbbf24;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="midiphor-widget" id="midiphor-widget">
+        <div class="midiphor-header">
+            <span>🎹</span>
+            <h3>MIDIPHOR Caption Generator</h3>
+        </div>
+        
+        <!-- Mini pipeline visualization -->
+        <div class="pipeline-mini" id="pipelineMini">
+            <div class="pipeline-step-mini">
+                <div class="step-dot" data-step="0">📁</div>
+                <span class="step-label">Upload</span>
+            </div>
+            <div class="pipeline-step-mini">
+                <div class="step-dot" data-step="1">🎼</div>
+                <span class="step-label">Extract</span>
+            </div>
+            <div class="pipeline-step-mini">
+                <div class="step-dot" data-step="2">📊</div>
+                <span class="step-label">Sections</span>
+            </div>
+            <div class="pipeline-step-mini">
+                <div class="step-dot" data-step="3">🔗</div>
+                <span class="step-label">Graph</span>
+            </div>
+            <div class="pipeline-step-mini">
+                <div class="step-dot" data-step="4">📋</div>
+                <span class="step-label">Features</span>
+            </div>
+            <div class="pipeline-step-mini">
+                <div class="step-dot" data-step="5">✍️</div>
+                <span class="step-label">Caption</span>
+            </div>
+        </div>
+        
+        <div class="midiphor-body">
+            <div class="midiphor-dropzone" id="dropzone">
+                <div class="midiphor-dropzone-icon">🎵</div>
+                <div class="midiphor-dropzone-text">
+                    Drop a MIDI file here or <strong>click to browse</strong>
+                </div>
+                <input type="file" class="midiphor-file-input" id="fileInput" accept=".mid,.midi">
+            </div>
+            
+            <div class="midiphor-status" id="status"></div>
+            
+            <div class="midiphor-result" id="result">
+                <div class="midiphor-caption" id="caption"></div>
+                <audio class="midiphor-audio" id="audio" controls style="display:none;"></audio>
+                
+                <div class="midiphor-features">
+                    <div class="midiphor-features-toggle" id="featuresToggle">
+                        <span>▶</span> Show extracted features
+                    </div>
+                    <div class="midiphor-features-content" id="featuresContent">
+                        <table class="feature-table" id="featuresTable"></table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="midiphor-footer">
+            Powered by <a href="https://github.com/Prowo/MIDIphor" target="_blank">MIDIPHOR</a>
+            · <a href="https://aclanthology.org/2026.nlp4musa-1.6/" target="_blank">Paper</a>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // Configuration - change this to your deployed API
+            const API_URL = 'https://yourname-midiphor.hf.space/api/predict';
+            
+            const widget = document.getElementById('midiphor-widget');
+            const dropzone = document.getElementById('dropzone');
+            const fileInput = document.getElementById('fileInput');
+            const status = document.getElementById('status');
+            const result = document.getElementById('result');
+            const caption = document.getElementById('caption');
+            const audio = document.getElementById('audio');
+            const featuresToggle = document.getElementById('featuresToggle');
+            const featuresContent = document.getElementById('featuresContent');
+            const featuresTable = document.getElementById('featuresTable');
+            const stepDots = document.querySelectorAll('.step-dot');
+            
+            let currentStep = -1;
+            
+            // Update pipeline visualization
+            function setStep(step) {
+                currentStep = step;
+                stepDots.forEach((dot, i) => {
+                    dot.classList.remove('completed', 'active');
+                    if (i < step) {
+                        dot.classList.add('completed');
+                    } else if (i === step) {
+                        dot.classList.add('active');
+                    }
+                });
+            }
+            
+            // Drag and drop handlers
+            dropzone.addEventListener('click', () => fileInput.click());
+            
+            dropzone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropzone.classList.add('dragover');
+            });
+            
+            dropzone.addEventListener('dragleave', () => {
+                dropzone.classList.remove('dragover');
+            });
+            
+            dropzone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropzone.classList.remove('dragover');
+                const file = e.dataTransfer.files[0];
+                if (file && (file.name.endsWith('.mid') || file.name.endsWith('.midi'))) {
+                    processFile(file);
+                } else {
+                    showError('Please drop a valid MIDI file (.mid or .midi)');
+                }
+            });
+            
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) processFile(file);
+            });
+            
+            // Features toggle
+            featuresToggle.addEventListener('click', () => {
+                featuresContent.classList.toggle('visible');
+                featuresToggle.querySelector('span').textContent = 
+                    featuresContent.classList.contains('visible') ? '▼' : '▶';
+            });
+            
+            // Simulate pipeline progress
+            async function simulateProgress() {
+                for (let i = 0; i <= 5; i++) {
+                    setStep(i);
+                    await new Promise(r => setTimeout(r, 400));
+                }
+            }
+            
+            // Process MIDI file
+            async function processFile(file) {
+                showLoading(`Processing ${file.name}...`);
+                result.classList.remove('visible');
+                
+                // Start progress animation
+                const progressPromise = simulateProgress();
+                
+                try {
+                    // Convert file to base64 for API
+                    const base64 = await fileToBase64(file);
+                    
+                    // Call Gradio API
+                    const response = await fetch(API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            data: [
+                                { name: file.name, data: base64 },
+                                true  // use_llm flag
+                            ]
+                        })
+                    });
+                    
+                    // Wait for progress animation
+                    await progressPromise;
+                    
+                    if (!response.ok) {
+                        throw new Error(`API error: ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    
+                    // Mark all steps complete
+                    setStep(6);
+                    
+                    // Display results
+                    displayResults(data.data);
+                    
+                } catch (error) {
+                    showError(error.message);
+                    setStep(-1);
+                }
+            }
+            
+            function fileToBase64(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+            }
+            
+            function displayResults(data) {
+                // Gradio returns: [pipeline_html, status, ...tables..., caption, audio_url]
+                // Caption is at index 13, audio at 14
+                const captionText = data[13] || data[0];  // Fallback if structure differs
+                const audioUrl = data[14] || data[1];
+                const slotsTable = data[12];  // feature_slots table
+                
+                status.style.display = 'none';
+                caption.textContent = typeof captionText === 'string' ? captionText : 'Caption generated';
+                
+                if (audioUrl && typeof audioUrl === 'string') {
+                    audio.src = audioUrl;
+                    audio.style.display = 'block';
+                } else {
+                    audio.style.display = 'none';
+                }
+                
+                // Display features table if available
+                if (slotsTable && slotsTable.data) {
+                    let tableHtml = '';
+                    slotsTable.data.forEach(row => {
+                        tableHtml += `<tr><td>${row[0]}</td><td>${row[1]}</td></tr>`;
+                    });
+                    featuresTable.innerHTML = tableHtml;
+                }
+                
+                result.classList.add('visible');
+            }
+            
+            function showLoading(message) {
+                status.className = 'midiphor-status loading';
+                status.innerHTML = `<span class="spinner"></span>${message}`;
+            }
+            
+            function showError(message) {
+                status.className = 'midiphor-status error';
+                status.textContent = message;
+            }
+        })();
+    </script>
+</body>
+</html>

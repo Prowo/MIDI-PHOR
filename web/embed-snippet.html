@@ -1,0 +1,42 @@
+<!--
+MIDIPHOR Embed Snippet
+
+Copy one of these options to embed the MIDI caption demo on your website.
+Replace YOUR_SPACE_URL with your Hugging Face Space (e.g. https://huggingface.co/spaces/Prowo/midiphor → https://Prowo-midiphor.hf.space).
+Paper: https://aclanthology.org/2026.nlp4musa-1.6/
+Repo: https://github.com/Prowo/MIDIphor
+-->
+
+<!-- OPTION 1: Simple iframe (recommended for most cases) -->
+<iframe 
+    src="https://YOUR_SPACE_URL.hf.space" 
+    width="100%" 
+    height="600" 
+    frameborder="0"
+    style="border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+</iframe>
+
+<!-- OPTION 2: Gradio's native embed (auto-resizes) -->
+<gradio-app src="https://YOUR_SPACE_URL.hf.space"></gradio-app>
+<script type="module" src="https://gradio.s3-us-west-2.amazonaws.com/4.0.0/gradio.js"></script>
+
+<!-- OPTION 3: Compact embed mode (smaller UI) -->
+<iframe 
+    src="https://YOUR_SPACE_URL.hf.space?__theme=light" 
+    width="100%" 
+    height="450" 
+    frameborder="0"
+    allow="microphone"
+    style="border-radius: 8px;">
+</iframe>
+
+<!-- OPTION 4: Self-hosted widget (copy embed.html to your server) -->
+<div id="midiphor-container"></div>
+<script>
+    // Load the widget
+    fetch('/path/to/embed.html')
+        .then(r => r.text())
+        .then(html => {
+            document.getElementById('midiphor-container').innerHTML = html;
+        });
+</script>

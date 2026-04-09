@@ -96,6 +96,19 @@ CREATE TABLE IF NOT EXISTS key_changes (
   PRIMARY KEY (song_id, at_bar, at_beat)
 );
 
+-- Optional: inferred key regions (e.g., modulation tracking) that should not affect
+-- Roman-numeral labeling, which typically assumes a single reference key.
+CREATE TABLE IF NOT EXISTS key_regions (
+  song_id     TEXT,
+  start_bar   INTEGER,
+  end_bar     INTEGER,
+  key         TEXT,               -- e.g., "C:maj", "A:min"
+  confidence  DOUBLE,
+  PRIMARY KEY (song_id, start_bar, end_bar, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_key_regions_song ON key_regions(song_id);
+
 CREATE TABLE IF NOT EXISTS chords (
   song_id     TEXT,
   chord_id    TEXT,

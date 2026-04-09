@@ -48,9 +48,15 @@ Thumbs.db
 .env.local
 .env.*.local
 
-# MIDI files (if they're large)
+# MIDI files (allow bundled tiny demo)
 *.mid
 *.midi
+!examples/**/*.mid
+!examples/**/*.midi
+
+# Large ML / audio assets (see midi_models/README.md)
+midi_models/*.sf2
+midi_models/*.pb
 
 # Temporary files
 *.tmp
@@ -62,4 +68,4 @@ scorespec_json/
 # Build artifacts and large generated outputs
 exports/
 clean_audio/
-
+cache/
