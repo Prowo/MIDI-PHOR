@@ -43,9 +43,32 @@ python scripts/hf_push_space.py --repo-id StevenAu/MIDI-PHOR
 
 This creates the Docker Space (if missing) and uploads the project. If `create_repo` returns **403**, your token cannot create Spaces — create the Space once in the web UI (Docker SDK), then either connect **GitHub** `Prowo/MIDI-PHOR` in Space settings or run the script again after fixing token permissions.
 
-**Recommended:** In the Space **Settings → Repository**, connect **GitHub** `Prowo/MIDI-PHOR` (branch `main`). That avoids uploading your whole laptop folder (including accidental `cache/`, `.venv/`, `data/`).
+### Why there is no “GitHub repo” in Space Settings
 
-If you use `hf_push_space.py`, it **ignores** those paths; never paste API tokens into chat — use `HF_TOKEN` in your shell only, then **revoke** the token if it was exposed.
+Hugging Face **does not** show a one-click “connect this Space to GitHub” control in Settings. The Hub repo for a Space **is** a Git repo (`https://huggingface.co/spaces/<user>/<name>`), but linking it to GitHub is done by **you**, not by a Settings toggle.
+
+**Option A — GitHub Action (recommended)**  
+This repo includes `.github/workflows/sync-to-hf-space.yml` (at repository root). On every push to **`main`**, it mirrors the GitHub tree to your Space (same files as Git — respects `.gitignore`).
+
+1. On **GitHub** (`Prowo/MIDI-PHOR`): **Settings → Secrets and variables → Actions** → New repository secret **`HF_TOKEN`** (HF access token with **write** access to `StevenAu/MIDI-PHOR`).
+2. If your Space path is not `StevenAu/MIDI-PHOR`, edit `huggingface_repo_id` in that workflow file.
+3. Push to `main` (or run **Actions → Sync to Hugging Face Space → Run workflow**).
+
+Official docs: [Managing Spaces with GitHub Actions](https://huggingface.co/docs/hub/spaces-github-actions).
+
+**Option B — Manual `git push` to the Space remote**
+
+```bash
+# one-time: add remote (use a WRITE token; do not commit the URL)
+git remote add hf https://huggingface.co/spaces/StevenAu/MIDI-PHOR
+export HF_TOKEN=hf_...   # write token
+git push https://StevenAu:${HF_TOKEN}@huggingface.co/spaces/StevenAu/MIDI-PHOR main:main
+```
+
+**Option C — `scripts/hf_push_space.py` from your PC**  
+Uploads from disk; the script **ignores** `cache/`, `.venv/`, `data/`, etc. (not the same as `.gitignore`, but aligned). Never paste tokens in chat.
+
+If you use `hf_push_space.py`, never paste API tokens into chat — use `HF_TOKEN` in your shell only, then **revoke** the token if it was exposed.
 
 1. Create a **Docker** Space and push this repository.
 2. The `Dockerfile` installs FluidSynth and the Debian `fluid-soundfont-gm` package, and sets `SF2_PATH` for the container.
